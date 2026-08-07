@@ -1,0 +1,451 @@
+// Family OS — Итерация 1: фундамент
+// Проектные принципы: не удалять данные, версионировать изменения,
+// общая оболочка сущности + специализированные поля конкретного типа.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Справочники / enum'ы ----------
+
+enum RecordStatus {
+  ACTIVE
+  ARCHIVED
+  VOID // аннулирована (напр. паспорт заменён) — не удаление
+}
+
+enum ConfidentialityLevel {
+  STANDARD
+  SENSITIVE
+  STRICTLY_CONFIDENTIAL
+}
+
+enum FamilyRole {
+  OWNER
+  PARTNER
+  ADULT
+  CHILD
+  RELATIVE
+  GUEST
+  LIMITED
+}
+
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  LEFT // не удаляется, история сохраняется
+}
+
+enum PermissionResource {
+  GENERAL
+  DOCUMENTS
+  FINANCE
+  MEDICAL
+  CONFIDENTIAL
+  INTEGRATIONS
+  USERS
+  KNOWLEDGE_BASE
+  FILES
+}
+
+enum PermissionAction {
+  VIEW
+  CREATE
+  EDIT
+  ARCHIVE
+  MANAGE
+}
+
+enum EntityVersionAction {
+  CREATE
+  UPDATE
+  ARCHIVE
+  UNARCHIVE
+  VOID
+  REVERT
+}
+
+enum StorageBackend {
+  LOCAL
+  S3_COMPATIBLE
+}
+
+enum OcrEngine {
+  TESSERACT
+}
+
+enum DocumentIntakeStatus {
+  PENDING       // OCR/классификация выполнены, ждём подтверждения пользователя
+  CONFIRMED     // пользователь подтвердил, создана реальная Entity
+  REJECTED      // пользователь отклонил предложенную классификацию
+}
+
+// ---------- Семейное пространство ----------
+
+model FamilySpace {
+  id            String   @id @default(uuid())
+  name          String
+  baseCurrency  String   @default("RUB")
+  status        RecordStatus @default(ACTIVE)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  memberships   Membership[]
+  people        Person[]
+  invitations   Invitation[]
+  entities      Entity[]
+  files         FileObject[]
+  auditLogs     AuditLog[]
+  permissionOverrides MembershipPermissionOverride[]
+  documentIntakes DocumentIntake[]
+
+  @@map("family_spaces")
+}
+
+// ---------- Пользователи (учётные записи для входа) ----------
+
+model User {
+  id                 String   @id @default(uuid())
+  email              String   @unique
+  passwordHash       String
+  status             RecordStatus @default(ACTIVE)
+  twoFactorEnabled   Boolean  @default(false)
+  twoFactorSecret    String?  // зашифрованный секрет TOTP
+  twoFactorRecoveryCodes String? // JSON-массив хэшей recovery-кодов
+  lastLoginAt        DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  memberships        Membership[]
+  sessions           Session[]
+  auditLogsAsActor   AuditLog[] @relation("AuditActor")
+  entityVersionsAuthored EntityVersion[]
+  filesCreated       FileObject[] @relation("FileCreatedBy")
+  loginAttempts      LoginAttempt[]
+
+  @@map("users")
+}
+
+model Session {
+  id               String   @id @default(uuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id])
+  refreshTokenHash String
+  userAgent        String?
+  ipAddress        String?
+  createdAt        DateTime @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model LoginAttempt {
+  id         String   @id @default(uuid())
+  email      String
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  success    Boolean
+  reason     String?  // invalid_password | invalid_2fa | locked | ok
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@map("login_attempts")
+}
+
+// ---------- Профиль человека (член семьи) ----------
+// Person существует независимо от User: у ребёнка может не быть логина.
+
+model Person {
+  id                  String   @id @default(uuid())
+  familySpaceId       String
+  familySpace         FamilySpace @relation(fields: [familySpaceId], references: [id])
+  fullName            String
+  birthDate           DateTime?
+  gender              String?
+  citizenship          String?
+  contacts            Json?    // { phones: [], emails: [] }
+  addresses           Json?
+  notes               String?
+  status              RecordStatus @default(ACTIVE)
+  confidentialityLevel ConfidentialityLevel @default(STANDARD)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  memberships         Membership[]
+  ownedEntities       Entity[] @relation("EntityOwnerPerson")
+
+  @@index([familySpaceId])
+  @@map("people")
+}
+
+// ---------- Членство: связывает User + Person с ролью в конкретном пространстве ----------
+
+model Membership {
+  id             String   @id @default(uuid())
+  familySpaceId  String
+  familySpace    FamilySpace @relation(fields: [familySpaceId], references: [id])
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+  personId       String
+  person         Person   @relation(fields: [personId], references: [id])
+  role           FamilyRole
+  status         MembershipStatus @default(ACTIVE)
+  invitedByUserId String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  permissionOverrides MembershipPermissionOverride[]
+
+  @@unique([familySpaceId, userId])
+  @@index([familySpaceId])
+  @@map("memberships")
+}
+
+// Точечные исключения из ролевой матрицы по умолчанию (напр. гостю разрешили просмотр медицины).
+model MembershipPermissionOverride {
+  id            String   @id @default(uuid())
+  membershipId  String
+  membership    Membership @relation(fields: [membershipId], references: [id])
+  familySpaceId String
+  familySpace   FamilySpace @relation(fields: [familySpaceId], references: [id])
+  resource      PermissionResource
+  action        PermissionAction
+  allowed       Boolean
+  createdAt     DateTime @default(now())
+  createdByUserId String?
+
+  @@unique([membershipId, resource, action])
+  @@map("membership_permission_overrides")
+}
+
+model Invitation {
+  id             String   @id @default(uuid())
+  familySpaceId  String
+  familySpace    FamilySpace @relation(fields: [familySpaceId], references: [id])
+  email          String
+  role           FamilyRole
+  token          String   @unique
+  status         String   @default("PENDING") // PENDING | ACCEPTED | EXPIRED | REVOKED
+  invitedByUserId String
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+
+  @@map("invitations")
+}
+
+// ---------- Универсальная сущность (оболочка) ----------
+// entityType определяет специализацию (в Итерации 1: knowledge_article;
+// в Итерации 2+ появятся passport, computer, medical_record и т.д.,
+// как отдельные типы, использующие тот же механизм оболочки+версий+файлов+связей).
+
+model Entity {
+  id                   String   @id @default(uuid())
+  familySpaceId        String
+  familySpace          FamilySpace @relation(fields: [familySpaceId], references: [id])
+  entityType           String   // 'knowledge_article', 'passport_rf', 'computer', 'location', ...
+  title                String
+  status               RecordStatus @default(ACTIVE)
+  confidentialityLevel ConfidentialityLevel @default(STANDARD)
+  ownerPersonId        String?
+  ownerPerson          Person?  @relation("EntityOwnerPerson", fields: [ownerPersonId], references: [id])
+  // Иерархическая принадлежность (используется, например, локациями:
+  // Страна → Город → Дом → Квартира → Комната). Для логических связей
+  // между сущностями (не физическая вложенность) используется EntityLink,
+  // а не это поле — см. docs/ARCHITECTURE.md, раздел "Иерархия vs связи".
+  parentEntityId       String?
+  parentEntity         Entity?  @relation("EntityHierarchy", fields: [parentEntityId], references: [id])
+  childEntities        Entity[] @relation("EntityHierarchy")
+  attributes           Json     // специализированные поля конкретного типа
+  currentVersion       Int      @default(1)
+  searchText           String?  // денормализованный текст для полнотекстового поиска (FTS индекс создаётся миграцией raw SQL)
+  createdByUserId      String
+  updatedByUserId      String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  versions             EntityVersion[]
+  files                EntityFile[]
+  linksFrom            EntityLink[] @relation("LinkSource")
+  linksTo              EntityLink[] @relation("LinkTarget")
+  documentIntakes      DocumentIntake[]
+
+  @@index([familySpaceId, entityType])
+  @@index([familySpaceId, status])
+  @@index([parentEntityId])
+  @@map("entities")
+}
+
+// История версий сущности — модель "как в Git": откат создаёт новую версию,
+// ничего не стирается.
+model EntityVersion {
+  id              String   @id @default(uuid())
+  entityId        String
+  entity          Entity   @relation(fields: [entityId], references: [id])
+  versionNumber   Int
+  action          EntityVersionAction
+  snapshot        Json     // полное состояние сущности на момент версии
+  changeSummary   String?
+  revertedFromVersion Int? // если action=REVERT — из какой версии взято состояние
+  changedByUserId String
+  changedByUser   User     @relation(fields: [changedByUserId], references: [id])
+  changedAt       DateTime @default(now())
+
+  @@unique([entityId, versionNumber])
+  @@index([entityId])
+  @@map("entity_versions")
+}
+
+// Произвольные связи между любыми двумя сущностями — основа "графа жизненного контекста".
+model EntityLink {
+  id             String   @id @default(uuid())
+  sourceEntityId String
+  sourceEntity   Entity   @relation("LinkSource", fields: [sourceEntityId], references: [id])
+  targetEntityId String
+  targetEntity   Entity   @relation("LinkTarget", fields: [targetEntityId], references: [id])
+  linkType       String   // 'relates_to' | 'confirms' | 'part_of' | ...
+  note           String?
+  createdAt      DateTime @default(now())
+  createdByUserId String
+
+  @@unique([sourceEntityId, targetEntityId, linkType])
+  @@index([sourceEntityId])
+  @@index([targetEntityId])
+  @@map("entity_links")
+}
+
+// ---------- Файлы ----------
+
+model FileObject {
+  id                   String   @id @default(uuid())
+  familySpaceId        String
+  familySpace          FamilySpace @relation(fields: [familySpaceId], references: [id])
+  originalName         String
+  mimeType             String
+  sizeBytes            Int
+  checksumSha256       String
+  storageBackend       StorageBackend @default(LOCAL)
+  storageKey           String   // путь/ключ в бэкенде хранения
+  status               RecordStatus @default(ACTIVE)
+  confidentialityLevel ConfidentialityLevel @default(STANDARD)
+  currentVersion       Int      @default(1)
+  createdByUserId      String
+  createdByUser        User     @relation("FileCreatedBy", fields: [createdByUserId], references: [id])
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  versions             FileVersion[]
+  entityLinks          EntityFile[]
+  ocrResults           FileOcrResult[]
+  documentIntakes      DocumentIntake[]
+
+  @@index([familySpaceId])
+  @@map("files")
+}
+
+model FileVersion {
+  id              String   @id @default(uuid())
+  fileId          String
+  file            FileObject @relation(fields: [fileId], references: [id])
+  versionNumber   Int
+  storageKey      String
+  sizeBytes       Int
+  checksumSha256  String
+  changeNote      String?
+  createdByUserId String
+  createdAt       DateTime @default(now())
+
+  @@unique([fileId, versionNumber])
+  @@map("file_versions")
+}
+
+// Связь файла с сущностью (many-to-many), с ролью привязки (скан, оригинал, приложение...)
+model EntityFile {
+  id         String   @id @default(uuid())
+  entityId   String
+  entity     Entity   @relation(fields: [entityId], references: [id])
+  fileId     String
+  file       FileObject @relation(fields: [fileId], references: [id])
+  relationRole String @default("attachment") // 'scan' | 'original' | 'attachment' | 'plan'
+  createdAt  DateTime @default(now())
+
+  @@unique([entityId, fileId, relationRole])
+  @@map("entity_files")
+}
+
+// ---------- OCR / интеллектуальная обработка документов (Итерация 2) ----------
+
+// Результат OCR/извлечения текста конкретной версии файла.
+// Оригинал файла НИКОГДА не изменяется — это отдельная, версионируемая запись рядом с ним.
+model FileOcrResult {
+  id             String   @id @default(uuid())
+  fileId         String
+  file           FileObject @relation(fields: [fileId], references: [id])
+  fileVersion    Int      // к какой версии файла относится
+  engine         OcrEngine @default(TESSERACT)
+  language       String   @default("rus")
+  textSource     String   // 'embedded_pdf_text' | 'ocr'
+  extractedText  String
+  confidence     Float?   // 0..1, null если источник — встроенный текстовый слой (тогда confidence не применим)
+  processedAt    DateTime @default(now())
+  errorMessage   String?
+  rawBlocks      Json?    // координаты распознанных блоков текста, если движок их вернул
+
+  @@index([fileId])
+  @@map("file_ocr_results")
+}
+
+// Промежуточный этап конвейера: "Загрузка → OCR → тип документа → предзаполненная карточка →
+// подтверждение пользователем". Пока пользователь не подтвердил — реальная Entity не создаётся.
+model DocumentIntake {
+  id                  String   @id @default(uuid())
+  familySpaceId       String
+  familySpace         FamilySpace @relation(fields: [familySpaceId], references: [id])
+  fileId              String
+  file                FileObject @relation(fields: [fileId], references: [id])
+  ocrResultId         String?
+  suggestedEntityType String?  // например 'passport_rf' — предположение конвейера классификации
+  suggestedAttributes Json?    // извлечённые реквизиты — ТОЛЬКО предположение, не факт
+  suggestedConfidence Float?
+  status              DocumentIntakeStatus @default(PENDING)
+  confirmedEntityId   String?
+  confirmedEntity     Entity?  @relation(fields: [confirmedEntityId], references: [id])
+  createdByUserId     String
+  createdAt           DateTime @default(now())
+  resolvedAt          DateTime?
+
+  @@index([familySpaceId, status])
+  @@map("document_intakes")
+}
+
+// ---------- Аудит / журнал безопасности ----------
+// Отдельно от EntityVersion: здесь фиксируются все значимые действия
+// (в т.ч. вход, изменение прав, работа с файлами), а не только изменения контента.
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  familySpaceId String?
+  familySpace   FamilySpace? @relation(fields: [familySpaceId], references: [id])
+  actorUserId   String?
+  actorUser     User?    @relation("AuditActor", fields: [actorUserId], references: [id])
+  action        String   // 'login' | 'entity.create' | 'entity.update' | 'permission.change' | ...
+  resourceType  String?
+  resourceId    String?
+  metadata      Json?
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime @default(now())
+
+  @@index([familySpaceId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@map("audit_logs")
+}
