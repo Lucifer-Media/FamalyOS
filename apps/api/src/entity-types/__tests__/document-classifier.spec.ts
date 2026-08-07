@@ -19,11 +19,27 @@ describe('Эвристический классификатор документ
     expect(result).toBeNull();
   });
 
-  it('слабое совпадение даёт низкую уверенность', () => {
-    const text = 'где-то упоминается паспорт мельком в письме';
+  it('слабое совпадение (ниже порога уверенности) не предлагается вообще — лучше честно спросить пользователя', () => {
+    const result = classifyDocumentText('где-то упоминается паспорт мельком в письме');
+    expect(result).toBeNull();
+  });
+
+  it('РЕГРЕССИЯ: трудовой договор с реквизитами паспорта работника не путается с паспортом', () => {
+    const text = `
+      ТРУДОВОЙ ДОГОВОР № 12
+      Работодатель ООО «Тест» и Работник заключили настоящий трудовой договор.
+      Паспорт серия 45 00 номер 123456, кем выдан ОВД района Тестовый.
+      Должностной оклад составляет 100 000 рублей.
+    `;
     const result = classifyDocumentText(text);
-    expect(result?.entityType).toBe('passport_rf');
-    expect(result?.confidence).toBeLessThan(0.7);
+    expect(result?.entityType).toBe('employment_contract');
+    expect(result?.entityType).not.toBe('passport_rf');
+  });
+
+  it('договор аренды не путается с договором купли-продажи', () => {
+    const text = 'ДОГОВОР АРЕНДЫ жилого помещения. Арендодатель передаёт, Арендатор принимает. Арендная плата 50000 руб.';
+    const result = classifyDocumentText(text);
+    expect(result?.entityType).toBe('lease_contract');
   });
 
   it('извлекает серию и номер паспорта из текста', () => {

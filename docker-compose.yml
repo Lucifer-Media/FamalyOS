@@ -1,3 +1,4 @@
+version: "3.9"
 
 # Family OS — Итерация 1.
 # Разворачивается в /opt/family-os на ThinkPad, рядом с уже работающими
@@ -30,8 +31,6 @@ services:
   api:
     build:
       context: ./apps/api
-      provenance: false
-      sbom: false
     container_name: family-os-api
     restart: unless-stopped
     depends_on:
@@ -48,7 +47,7 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://192.168.1.18:3400}
     volumes:
       - family_os_uploads:/app/uploads
-      - family_os_tesseract_cache:/app/.cache/tesseract # языковые данные OCR, качаются один раз при первом запросе
+      - family_os_tesseract_cache:/app/.cache/tesseract # временный кэш воркеров OCR (языковые данные уже встроены в образ, сеть не нужна)
     networks:
       - family_os_internal
     ports:
@@ -62,8 +61,6 @@ services:
   web:
     build:
       context: ./apps/web
-      args:
-        NEXT_PUBLIC_API_URL: http://api:3001
     container_name: family-os-web
     restart: unless-stopped
     depends_on:
