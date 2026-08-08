@@ -682,6 +682,56 @@ export const ENTITY_TYPE_REGISTRY: Record<string, EntityTypeSchema> = {
     ],
   },
 
+  military_id: {
+    entityType: 'military_id',
+    labelSingular: 'Военный билет',
+    labelPlural: 'Военные билеты',
+    resource: 'DOCUMENTS',
+    fields: [
+      { key: 'fullName', label: 'ФИО', type: 'string', required: true },
+      { key: 'birthDate', label: 'Дата рождения', type: 'date' },
+      { key: 'series', label: 'Серия', type: 'string' },
+      { key: 'number', label: 'Номер', type: 'string', required: true },
+      { key: 'issueDate', label: 'Дата выдачи', type: 'date' },
+      { key: 'issuingAuthority', label: 'Кем выдан (военкомат)', type: 'string' },
+      { key: 'category', label: 'Категория годности', type: 'string' },
+      { key: 'rank', label: 'Воинское звание', type: 'string' },
+    ],
+  },
+  cash_receipt: {
+    entityType: 'cash_receipt',
+    labelSingular: 'Кассовый чек',
+    labelPlural: 'Кассовые чеки',
+    resource: 'DOCUMENTS',
+    fields: [
+      { key: 'date', label: 'Дата и время', type: 'date', required: true },
+      { key: 'shopName', label: 'Магазин/продавец', type: 'string' },
+      { key: 'sellerInn', label: 'ИНН продавца', type: 'string' },
+      { key: 'receiptNumber', label: 'Номер чека', type: 'string' },
+      { key: 'fiscalNumber', label: 'ФН (номер фискального накопителя)', type: 'string' },
+      { key: 'fiscalDocument', label: 'ФД (номер фискального документа)', type: 'string' },
+      { key: 'fiscalSign', label: 'ФП (фискальный признак)', type: 'string' },
+      { key: 'totalAmount', label: 'Итоговая сумма', type: 'number', required: true },
+      { key: 'items', label: 'Товары/услуги (текстом, по одной позиции на строку)', type: 'text' },
+    ],
+  },
+  /**
+   * Тип-заглушка на случай, когда OCR/классификатор не смог определить
+   * документ, а пользователь не хочет заводить полноценную специализированную
+   * карточку прямо сейчас. Файл и базовые заметки сохраняются, а
+   * переклассифицировать в конкретный тип можно позже вручную.
+   */
+  generic_document: {
+    entityType: 'generic_document',
+    labelSingular: 'Документ (тип не определён)',
+    labelPlural: 'Документы без определённого типа',
+    resource: 'DOCUMENTS',
+    fields: [
+      { key: 'documentDate', label: 'Дата документа (если известна)', type: 'date' },
+      { key: 'notes', label: 'Заметки', type: 'text' },
+    ],
+  },
+
   // ---------- Цифровые аккаунты ----------
   digital_account: {
     entityType: 'digital_account',

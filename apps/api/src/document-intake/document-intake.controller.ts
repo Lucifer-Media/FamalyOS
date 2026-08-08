@@ -15,13 +15,19 @@ export class DocumentIntakeController {
     @CurrentUser() userId: string,
     @FamilySpaceId() familySpaceId: string,
     @Param('fileId') fileId: string,
+    @Query('targetEntityId') targetEntityId?: string,
   ) {
-    return this.service.createFromUploadedFile(userId, familySpaceId, fileId);
+    return this.service.createFromUploadedFile(userId, familySpaceId, fileId, targetEntityId);
   }
 
   @Get()
-  list(@CurrentUser() userId: string, @FamilySpaceId() familySpaceId: string, @Query('status') status?: string) {
-    return this.service.list(userId, familySpaceId, status);
+  list(
+    @CurrentUser() userId: string,
+    @FamilySpaceId() familySpaceId: string,
+    @Query('status') status?: string,
+    @Query('confirmedEntityId') confirmedEntityId?: string,
+  ) {
+    return this.service.list(userId, familySpaceId, status, confirmedEntityId);
   }
 
   @Get(':id')
@@ -42,5 +48,25 @@ export class DocumentIntakeController {
   @Post(':id/reject')
   reject(@CurrentUser() userId: string, @FamilySpaceId() familySpaceId: string, @Param('id') id: string) {
     return this.service.reject(userId, familySpaceId, id);
+  }
+
+  @Post(':id/retry')
+  retry(@CurrentUser() userId: string, @FamilySpaceId() familySpaceId: string, @Param('id') id: string) {
+    return this.service.retry(userId, familySpaceId, id);
+  }
+
+  @Get(':id/pages')
+  listPages(@CurrentUser() userId: string, @FamilySpaceId() familySpaceId: string, @Param('id') id: string) {
+    return this.service.listPages(userId, familySpaceId, id);
+  }
+
+  @Post(':id/pages/:pageNumber/split')
+  createIntakeFromPage(
+    @CurrentUser() userId: string,
+    @FamilySpaceId() familySpaceId: string,
+    @Param('id') id: string,
+    @Param('pageNumber') pageNumber: string,
+  ) {
+    return this.service.createIntakeFromPage(userId, familySpaceId, id, parseInt(pageNumber, 10));
   }
 }

@@ -42,25 +42,55 @@ describe('Эвристический классификатор документ
     expect(result?.entityType).toBe('lease_contract');
   });
 
-  it('извлекает серию и номер паспорта из текста', () => {
-    const attrs = extractSuggestedAttributes('passport_rf', 'ПАСПОРТ 45 00 123456 выдан 20.05.2015');
-    expect(attrs.series).toBe('45 00');
-    expect(attrs.number).toBe('123456');
-    expect(attrs.issueDate).toBe('2015-05-20');
+  it('извлекает серию и номер паспорта из текста, с полем уверенности по каждому значению', () => {
+    const { attributes, fieldConfidence } = extractSuggestedAttributes(
+      'passport_rf',
+      'ПАСПОРТ 45 00 123456 выдан 20.05.2015',
+    );
+    expect(attributes.series).toBe('45 00');
+    expect(attributes.number).toBe('123456');
+    expect(attributes.issueDate).toBe('2015-05-20');
+    expect(fieldConfidence.number).toBeGreaterThan(0);
+    expect(fieldConfidence.series).toBeGreaterThan(0);
   });
 
-  it('извлекает номер СНИЛС в правильном формате', () => {
-    const attrs = extractSuggestedAttributes('snils', 'СНИЛС 123-456-789 00');
-    expect(attrs.number).toBe('123-456-789 00');
+  it('извлекает номер СНИЛС только при верной контрольной сумме (защита от ошибок OCR)', () => {
+    // 112-233-445 95 — валидная контрольная сумма по алгоритму СФР
+    const valid = extractSuggestedAttributes('snils', 'СНИЛС 112-233-445 95');
+    expect(valid.attributes.number).toBe('112-233-445 95');
+    expect(valid.fieldConfidence.number).toBeGreaterThanOrEqual(0.9); // контрольная сумма сошлась — высокая уверенность
+
+    // 123-456-789 00 — синтаксически похоже на СНИЛС, но контрольная сумма неверна
+    const invalid = extractSuggestedAttributes('snils', 'СНИЛС 123-456-789 00');
+    expect(invalid.attributes.number).toBeUndefined();
   });
 
   it('извлекает ИНН (10 или 12 цифр)', () => {
-    const attrs = extractSuggestedAttributes('inn', 'ИНН 7712345678');
-    expect(attrs.number).toBe('7712345678');
+    const { attributes } = extractSuggestedAttributes('inn', 'ИНН 7712345678');
+    expect(attributes.number).toBe('7712345678');
   });
 
   it('для незнакомого типа не пытается ничего извлечь', () => {
-    const attrs = extractSuggestedAttributes('vehicle', 'ПТС AA123456 VIN XTA212345X1234567');
-    expect(attrs).toEqual({});
+    const { attributes } = extractSuggestedAttributes('vehicle', 'ПТС AA123456 VIN XTA212345X1234567');
+    expect(attributes).toEqual({});
+  });
+
+  it('загранпаспорт: при наличии MRZ использует её с высокой уверенностью, а не текст разворота', () => {
+    const mrzLine1 = 'P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<';
+    const mrzLine2 = 'L898902C<3UTO6908061F9406236ZE184226B<<<<<10';
+    const { attributes, fieldConfidence } = extractSuggestedAttributes(
+      'foreign_passport',
+      `какой-то шум OCR\n${mrzLine1}\n${mrzLine2}`,
+    );
+    expect(attributes.fullName).toBe('ERIKSSON ANNA MARIA');
+    expect(attributes.number).toBe('L898902C');
+    expect(fieldConfidence.number).toBeGreaterThanOrEqual(0.9);
+  });
+
+  it('кассовый чек: извлекает список товаров и итоговую сумму', () => {
+    const text = 'Хлеб белый 1 x 45.00 = 45.00\nИТОГО 45.00';
+    const { attributes } = extractSuggestedAttributes('cash_receipt', text);
+    expect(attributes.totalAmount).toBe(45);
+    expect(String(attributes.items)).toContain('Хлеб');
   });
 });

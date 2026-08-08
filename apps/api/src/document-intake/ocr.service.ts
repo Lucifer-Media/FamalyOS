@@ -7,11 +7,22 @@ import * as os from 'os';
 
 const execFileAsync = promisify(execFile);
 
+export interface PageOcrResult {
+  pageNumber: number;
+  text: string;
+  confidence: number | null;
+}
+
 export interface OcrExtractionResult {
   textSource: 'embedded_pdf_text' | 'ocr';
   extractedText: string;
   confidence: number | null; // null — не применимо (текстовый слой, а не распознавание)
   errorMessage?: string;
+  /** Постраничные результаты — только для растеризованных PDF (сканов);
+   * позволяет впоследствии разметить составной документ (например, разные
+   * развороты паспорта: основной, регистрация, брак, дети) по отдельности,
+   * а не одним слитным текстом. */
+  pages?: PageOcrResult[];
 }
 
 // Языковые данные Tesseract встраиваются в Docker-образ на этапе сборки
@@ -94,14 +105,18 @@ export class OcrService {
 
       const texts: string[] = [];
       const confidences: number[] = [];
+      const pages: PageOcrResult[] = [];
       // Ограничиваем первыми 5 страницами — для семейных документов (паспорт,
       // договор на несколько листов) этого достаточно, а обработка всех
       // страниц многостраничного PDF может быть медленной без выделенной GPU.
+      let pageNumber = 0;
       for (const pageFile of pageFiles.slice(0, 5)) {
+        pageNumber++;
         const pageBuffer = fs.readFileSync(path.join(tmpDir, pageFile));
         const result = await this.runTesseract(pageBuffer);
         if (result.text) texts.push(result.text);
         if (result.confidence != null) confidences.push(result.confidence);
+        pages.push({ pageNumber, text: result.text, confidence: result.confidence });
       }
 
       const avgConfidence =
@@ -111,6 +126,7 @@ export class OcrService {
         textSource: 'ocr',
         extractedText: texts.join('\n\n--- страница ---\n\n'),
         confidence: avgConfidence,
+        pages,
       };
     } catch (err) {
       this.logger.error('Ошибка растеризации/OCR скана PDF', err as Error);
@@ -142,6 +158,7 @@ export class OcrService {
     buffer: Buffer,
   ): Promise<{ text: string; confidence: number | null; errorMessage?: string }> {
     try {
+      const preprocessed = await this.preprocessImage(buffer);
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { createWorker } = require('tesseract.js');
       // langPath указывает на ЛОКАЛЬНУЮ директорию с .traineddata, встроенную
@@ -153,7 +170,11 @@ export class OcrService {
         gzip: false,
       });
       try {
-        const { data } = await worker.recognize(buffer);
+        // PSM 6 ("единый блок текста") обычно работает надёжнее, чем
+        // автоматическая сегментация по умолчанию, для фото/сканов документов
+        // с плотным текстом (паспорт, договор) — уменьшает "мусорный" вывод.
+        await worker.setParameters({ tessedit_pageseg_mode: '6' });
+        const { data } = await worker.recognize(preprocessed);
         return {
           text: data.text ?? '',
           confidence: typeof data.confidence === 'number' ? data.confidence / 100 : null,
@@ -164,6 +185,35 @@ export class OcrService {
     } catch (err) {
       this.logger.error('Ошибка Tesseract OCR', err as Error);
       return { text: '', confidence: 0, errorMessage: 'OCR не удался: ' + (err as Error).message };
+    }
+  }
+
+  /**
+   * Предобработка изображения перед OCR — как правило, критична для
+   * реальных фотографий документов (в отличие от идеальных плоских сканов):
+   * приведение к градациям серого, автоконтраст, лёгкая резкость и
+   * увеличение мелких снимков телефона. Без этого Tesseract на фото
+   * документов часто выдаёт "мусорный" текст (низкая уверенность,
+   * бессмысленные символы) — это и было основной причиной низкого
+   * качества распознавания в первых тестах.
+   */
+  private async preprocessImage(buffer: Buffer): Promise<Buffer> {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const sharp = require('sharp');
+      const image = sharp(buffer, { failOn: 'none' }).rotate(); // rotate() без аргументов — авто-поворот по EXIF
+      const metadata = await image.metadata();
+      const targetWidth = 2200; // эмпирически неплохой компромисс для печатного текста документов
+      const needsUpscale = (metadata.width ?? 0) > 0 && (metadata.width as number) < targetWidth;
+
+      let pipeline = image.grayscale().normalize().sharpen();
+      if (needsUpscale) {
+        pipeline = pipeline.resize({ width: targetWidth, kernel: 'lanczos3' });
+      }
+      return await pipeline.toFormat('png').toBuffer();
+    } catch (err) {
+      this.logger.warn('Предобработка изображения не удалась, используем оригинал: ' + (err as Error).message);
+      return buffer;
     }
   }
 }

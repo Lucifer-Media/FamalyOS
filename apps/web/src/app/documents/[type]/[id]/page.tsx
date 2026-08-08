@@ -1,14 +1,22 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '@/components/app-shell';
 import { useRequireAuth } from '@/lib/use-require-auth';
 import { useEntityTypeSchema } from '@/lib/use-entity-types';
 import { DynamicEntityForm } from '@/components/dynamic-entity-form';
-import { apiFetch, ApiError } from '@/lib/api';
+import { apiFetch, ApiError, getAccessToken, getCurrentFamilySpaceId } from '@/lib/api';
 import { Button, Card, ErrorText } from '@/components/ui';
-import { History, Save } from 'lucide-react';
+import { History, Save, Paperclip, Download, ScanLine } from 'lucide-react';
+
+interface AttachedFile {
+  fileId: string;
+  relationRole: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+}
 
 interface EntityDetail {
   id: string;
@@ -34,13 +42,20 @@ export default function EntityDetailPage() {
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   const [showVersions, setShowVersions] = useState(false);
+  const [files, setFiles] = useState<AttachedFile[]>([]);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
+  const reprocessInputRef = useRef<HTMLInputElement>(null);
 
   async function load() {
-    const data = await apiFetch<EntityDetail>(`/entities/${params.id}`);
+    const [data, attachedFiles] = await Promise.all([
+      apiFetch<EntityDetail>(`/entities/${params.id}`),
+      apiFetch<AttachedFile[]>(`/entities/${params.id}/files`),
+    ]);
     setEntity(data);
     setValues(data.attributes ?? {});
+    setFiles(attachedFiles);
   }
 
   useEffect(() => {
@@ -86,6 +101,28 @@ export default function EntityDetailPage() {
     await loadVersions();
   }
 
+  async function onReprocessFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setReprocessing(true);
+    setError('');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const uploaded = await apiFetch<{ id: string }>('/files', { method: 'POST', body: form, isForm: true });
+      const { intake } = await apiFetch<{ intake: { id: string } }>(
+        `/document-intake/from-file/${uploaded.id}?targetEntityId=${params.id}`,
+        { method: 'POST' },
+      );
+      router.push(`/document-intake/${intake.id}`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось обработать документ');
+      setReprocessing(false);
+    } finally {
+      if (reprocessInputRef.current) reprocessInputRef.current.value = '';
+    }
+  }
+
   if (authLoading || !isAuthenticated) return null;
 
   return (
@@ -102,6 +139,10 @@ export default function EntityDetailPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h1 className="font-display text-xl font-semibold text-ink">{entity.title}</h1>
             <div className="flex gap-2">
+              <input ref={reprocessInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={onReprocessFile} />
+              <Button variant="secondary" onClick={() => reprocessInputRef.current?.click()} disabled={reprocessing}>
+                <ScanLine size={16} /> {reprocessing ? 'Обрабатываем…' : 'Переснять/переобработать'}
+              </Button>
               <Button variant="secondary" onClick={loadVersions}>
                 <History size={16} /> Версии (v{entity.currentVersion})
               </Button>
@@ -114,6 +155,29 @@ export default function EntityDetailPage() {
           <Card className="mt-4">
             <DynamicEntityForm schema={schema} values={values} onChange={(k, v) => setValues((s) => ({ ...s, [k]: v }))} />
           </Card>
+
+          {files.length > 0 && (
+            <Card className="mt-4">
+              <h3 className="font-display text-lg font-semibold">Прикреплённые файлы</h3>
+              <ul className="mt-2 divide-y divide-line">
+                {files.map((f) => (
+                  <li key={f.fileId} className="flex items-center justify-between py-2 text-sm">
+                    <span className="flex items-center gap-2">
+                      <Paperclip size={14} className="text-ink/40" />
+                      {f.originalName}
+                      <span className="text-xs text-ink/40">({f.relationRole})</span>
+                    </span>
+                    <button
+                      onClick={() => downloadFile(f.fileId, f.originalName)}
+                      className="flex items-center gap-1 text-moss-600 hover:underline"
+                    >
+                      <Download size={14} /> Скачать
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
 
           {showVersions && (
             <Card className="mt-4">
@@ -139,4 +203,19 @@ export default function EntityDetailPage() {
       )}
     </AppShell>
   );
+}
+
+async function downloadFile(fileId: string, originalName: string) {
+  const token = getAccessToken();
+  const spaceId = getCurrentFamilySpaceId();
+  const res = await fetch(`/api/files/${fileId}/download`, {
+    headers: { Authorization: `Bearer ${token}`, ...(spaceId ? { 'X-Family-Space-Id': spaceId } : {}) },
+  });
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = originalName;
+  a.click();
+  URL.revokeObjectURL(url);
 }

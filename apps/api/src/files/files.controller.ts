@@ -18,6 +18,12 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { FamilySpaceId } from '../common/decorators/family-space.decorator';
 import { FilesService } from './files.service';
 
+// 100 МБ — раздел 22 ТЗ Итерации 2 явно называет этот размер как верхнюю
+// границу для проверки. Без явного лимита Multer в Express может либо
+// молча зависнуть на очень больших файлах, либо упасть с неинформативной
+// ошибкой памяти — с лимитом клиент получает понятный HTTP 413.
+const MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024;
+
 @UseGuards(JwtAuthGuard)
 @Controller('files')
 export class FilesController {
@@ -29,7 +35,7 @@ export class FilesController {
   }
 
   @Post()
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_SIZE_BYTES } }))
   upload(
     @CurrentUser() userId: string,
     @FamilySpaceId() familySpaceId: string,
@@ -56,7 +62,7 @@ export class FilesController {
   }
 
   @Post(':id/versions')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_SIZE_BYTES } }))
   addVersion(
     @CurrentUser() userId: string,
     @FamilySpaceId() familySpaceId: string,

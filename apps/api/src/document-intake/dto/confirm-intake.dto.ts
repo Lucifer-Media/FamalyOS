@@ -1,4 +1,4 @@
-import { IsObject, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsObject, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class ConfirmIntakeDto {
   @IsString()
@@ -14,4 +14,12 @@ export class ConfirmIntakeDto {
   @IsOptional()
   @IsString()
   ownerPersonId?: string;
+
+  @IsOptional()
+  @IsString()
+  parentEntityId?: string; // для дочерних записей составных документов (страница паспорта → регистрация)
+
+  @IsOptional()
+  @IsArray()
+  additionalPersonIds?: string[];
 }

@@ -96,4 +96,9 @@ export class EntitiesController {
   listChildren(@CurrentUser() userId: string, @FamilySpaceId() familySpaceId: string, @Param('id') id: string) {
     return this.service.listChildren(userId, familySpaceId, id);
   }
+
+  @Get(':id/files')
+  listFiles(@CurrentUser() userId: string, @FamilySpaceId() familySpaceId: string, @Param('id') id: string) {
+    return this.service.listFiles(userId, familySpaceId, id);
+  }
 }

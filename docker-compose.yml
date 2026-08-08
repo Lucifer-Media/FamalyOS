@@ -28,6 +28,23 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: family-os-redis
+    restart: unless-stopped
+    # Только очередь фоновой обработки OCR — не для пользовательских данных,
+    # не публикуется наружу вообще, доступен только внутри docker-сети.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    volumes:
+      - family_os_redis:/data
+    networks:
+      - family_os_internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
   api:
     build:
       context: ./apps/api
@@ -36,8 +53,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-family_os}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-family_os}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
@@ -85,3 +106,4 @@ volumes:
   family_os_db:
   family_os_uploads:
   family_os_tesseract_cache:
+  family_os_redis:

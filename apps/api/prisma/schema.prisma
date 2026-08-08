@@ -81,9 +81,12 @@ enum OcrEngine {
 }
 
 enum DocumentIntakeStatus {
+  PROCESSING    // файл принят, задача поставлена в очередь Redis/BullMQ, OCR ещё выполняется
   PENDING       // OCR/классификация выполнены, ждём подтверждения пользователя
   CONFIRMED     // пользователь подтвердил, создана реальная Entity
   REJECTED      // пользователь отклонил предложенную классификацию
+  FAILED        // непредвиденная ошибка обработки в очереди (не то же самое, что "OCR не распознал текст" —
+                // это штатно обрабатывается и всё равно приводит к PENDING с errorMessage)
 }
 
 // ---------- Семейное пространство ----------
@@ -183,6 +186,7 @@ model Person {
 
   memberships         Membership[]
   ownedEntities       Entity[] @relation("EntityOwnerPerson")
+  additionalEntityLinks EntityPersonLink[] @relation("EntityPersonLinks")
 
   @@index([familySpaceId])
   @@map("people")
@@ -277,12 +281,35 @@ model Entity {
   files                EntityFile[]
   linksFrom            EntityLink[] @relation("LinkSource")
   linksTo              EntityLink[] @relation("LinkTarget")
-  documentIntakes      DocumentIntake[]
+  documentIntakes      DocumentIntake[] @relation("ConfirmedEntity")
+  reprocessIntakes     DocumentIntake[] @relation("TargetEntity")
+  personLinks          EntityPersonLink[]
 
   @@index([familySpaceId, entityType])
   @@index([familySpaceId, status])
   @@index([parentEntityId])
   @@map("entities")
+}
+
+// Много-ко-многим связь сущности с людьми, к которым она относится —
+// решает сценарий "документ ребёнка виден и в профиле ребёнка, и в
+// профиле родителя" БЕЗ дублирования объекта документа (один физический
+// Entity, несколько связей). Entity.ownerPersonId остаётся "основным
+// владельцем" для обратной совместимости и простых случаев; эта таблица —
+// для дополнительных людей, которым документ тоже релевантен.
+model EntityPersonLink {
+  id           String   @id @default(uuid())
+  entityId     String
+  entity       Entity   @relation(fields: [entityId], references: [id])
+  personId     String
+  person       Person   @relation("EntityPersonLinks", fields: [personId], references: [id])
+  relationRole String   @default("subject") // 'subject' | 'guardian_view' | ...
+  createdAt    DateTime @default(now())
+  createdByUserId String
+
+  @@unique([entityId, personId, relationRole])
+  @@index([personId])
+  @@map("entity_person_links")
 }
 
 // История версий сущности — модель "как в Git": откат создаёт новую версию,
@@ -416,9 +443,23 @@ model DocumentIntake {
   suggestedEntityType String?  // например 'passport_rf' — предположение конвейера классификации
   suggestedAttributes Json?    // извлечённые реквизиты — ТОЛЬКО предположение, не факт
   suggestedConfidence Float?
-  status              DocumentIntakeStatus @default(PENDING)
+  // Уверенность извлечения ПО КАЖДОМУ ПОЛЮ отдельно (0..1), не только по документу
+  // в целом — например { "series": 0.9, "number": 0.9, "issueDate": 0.4 }.
+  suggestedFieldConfidence Json?
+  // Если задано — это ПЕРЕОБРАБОТКА уже существующей сущности (например,
+  // повторно сфотографировали тот же паспорт), а не создание новой.
+  // См. правило "OCR не должен молча изменять уже подтверждённые данные":
+  // при confirm() для intake с targetEntityId различия между текущими и
+  // предложенными значениями требуют явного решения пользователя по каждому полю.
+  targetEntityId      String?
+  targetEntity        Entity?  @relation("TargetEntity", fields: [targetEntityId], references: [id])
+  // Обнаруженный на этапе загрузки потенциальный дубликат (тот же файл
+  // по контрольной сумме уже был загружен и подтверждён ранее).
+  possibleDuplicateOfEntityId String?
+  status              DocumentIntakeStatus @default(PROCESSING)
+  processingError     String?  // причина, если статус FAILED (ошибка воркера очереди, не "OCR не распознал текст")
   confirmedEntityId   String?
-  confirmedEntity     Entity?  @relation(fields: [confirmedEntityId], references: [id])
+  confirmedEntity     Entity?  @relation("ConfirmedEntity", fields: [confirmedEntityId], references: [id])
   createdByUserId     String
   createdAt           DateTime @default(now())
   resolvedAt          DateTime?

@@ -34,6 +34,7 @@ export const DOCUMENT_TYPE_GROUPS: { title: string; types: string[] }[] = [
       'driver_license',
       'birth_certificate',
       'marriage_certificate',
+      'military_id',
       'visa',
       'border_crossing',
       'residence_permit',
@@ -53,7 +54,7 @@ export const DOCUMENT_TYPE_GROUPS: { title: string; types: string[] }[] = [
   },
   {
     title: 'Акты, счета, заявления, справки',
-    types: ['act_of_work', 'invoice', 'invoice_facture', 'application', 'power_of_attorney', 'certificate'],
+    types: ['act_of_work', 'invoice', 'invoice_facture', 'cash_receipt', 'application', 'power_of_attorney', 'certificate'],
   },
   {
     title: 'Имущество и активы',
@@ -62,6 +63,10 @@ export const DOCUMENT_TYPE_GROUPS: { title: string; types: string[] }[] = [
   {
     title: 'Цифровые аккаунты',
     types: ['digital_account'],
+  },
+  {
+    title: 'Прочее',
+    types: ['generic_document'],
   },
 ];
 

@@ -8,6 +8,10 @@ interface Props {
   values: Record<string, unknown>;
   onChange: (key: string, value: unknown) => void;
   disabled?: boolean;
+  /** Уверенность OCR-извлечения по каждому полю (0..1) — если передана,
+   * поля с низкой уверенностью подсвечиваются, чтобы пользователь
+   * обратил на них особое внимание перед сохранением (раздел 9 ТЗ). */
+  fieldConfidence?: Record<string, number>;
 }
 
 /**
@@ -16,7 +20,7 @@ interface Props {
  * структура»: один компонент обслуживает и паспорт, и компьютер, и
  * медицинское заключение — набор полей приходит с backend.
  */
-export function DynamicEntityForm({ schema, values, onChange, disabled }: Props) {
+export function DynamicEntityForm({ schema, values, onChange, disabled, fieldConfidence }: Props) {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       {schema.fields.map((field) => (
@@ -26,6 +30,7 @@ export function DynamicEntityForm({ schema, values, onChange, disabled }: Props)
             value={values[field.key]}
             onChange={(v) => onChange(field.key, v)}
             disabled={disabled}
+            confidence={fieldConfidence?.[field.key]}
           />
         </div>
       ))}
@@ -38,13 +43,24 @@ function DynamicField({
   value,
   onChange,
   disabled,
+  confidence,
 }: {
   field: FieldSchema;
   value: unknown;
   onChange: (value: unknown) => void;
   disabled?: boolean;
+  confidence?: number;
 }) {
-  const label = field.required ? `${field.label} *` : field.label;
+  const baseLabel = field.required ? `${field.label} *` : field.label;
+  // Низкая уверенность OCR по конкретному полю — визуально предупреждаем,
+  // не блокируя ввод (пользователь и так видит поле и может исправить).
+  const confidenceNote =
+    confidence != null
+      ? confidence < 0.6
+        ? ` ⚠️ низкая уверенность OCR (~${Math.round(confidence * 100)}%)`
+        : ` (уверенность OCR ~${Math.round(confidence * 100)}%)`
+      : '';
+  const label = baseLabel + confidenceNote;
 
   if (field.type === 'text') {
     return (

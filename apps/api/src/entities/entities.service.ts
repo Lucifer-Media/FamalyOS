@@ -28,8 +28,24 @@ function resourceForType(entityType: string): PermissionResource {
 }
 
 function buildSearchText(title: string, attributes: Record<string, unknown>): string {
-  const content = typeof attributes?.content === 'string' ? attributes.content : '';
-  return [title, content].filter(Boolean).join('\n').slice(0, 100_000);
+  // Раньше в поиск попадало только поле attributes.content (нужное только
+  // для базы знаний) — из-за этого поиск по номеру паспорта/СНИЛС/ИНН и
+  // любым другим специализированным полям не работал вообще. Теперь
+  // сериализуем ВСЕ значения attributes (кроме служебных/пустых), чтобы
+  // полнотекстовый поиск видел реквизиты любого типа документа.
+  const flatValues: string[] = [];
+  const collect = (value: unknown) => {
+    if (value == null) return;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      flatValues.push(String(value));
+    } else if (Array.isArray(value)) {
+      value.forEach(collect);
+    } else if (typeof value === 'object') {
+      Object.values(value as Record<string, unknown>).forEach(collect);
+    }
+  };
+  collect(attributes);
+  return [title, ...flatValues].filter(Boolean).join('\n').slice(0, 100_000);
 }
 
 @Injectable()
@@ -389,6 +405,25 @@ export class EntitiesService {
     return { outgoing: out, incoming };
   }
 
+  /** Файлы, прикреплённые к сущности (сканы, оригиналы, приложения). */
+  async listFiles(userId: string, familySpaceId: string, entityId: string) {
+    await this.findOne(userId, familySpaceId, entityId); // проверка доступа
+    const links = await this.prisma.entityFile.findMany({
+      where: { entityId },
+      include: { file: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    return links
+      .filter((l: (typeof links)[number]) => l.file.status !== 'VOID')
+      .map((l: (typeof links)[number]) => ({
+        fileId: l.file.id,
+        relationRole: l.relationRole,
+        originalName: l.file.originalName,
+        mimeType: l.file.mimeType,
+        sizeBytes: l.file.sizeBytes,
+        createdAt: l.createdAt,
+      }));
+  }
   /**
    * Дочерние сущности по физической иерархии (parentEntityId) — используется
    * деревом локаций (Страна → Город → Дом → Квартира) и вложенными записями

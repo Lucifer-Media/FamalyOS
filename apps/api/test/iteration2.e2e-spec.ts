@@ -148,4 +148,58 @@ describe('Итерация 2: специализированные типы (e2e
       });
     expect(res.status).toBe(400);
   });
+
+  it('РЕГРЕССИЯ: поиск находит сущность по номеру документа, а не только по заголовку', async () => {
+    const passport = await request(app.getHttpServer())
+      .post('/documents/passport-rf')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .set('X-Family-Space-Id', familySpaceId)
+      .send({
+        attributes: {
+          series: '45 00',
+          number: '881584',
+          fullName: 'Поисковый Тест Тестович',
+          birthDate: '1990-01-01',
+          issueDate: '2015-05-20',
+          issuingAuthority: 'ОВД Тестового района',
+        },
+      });
+    expect(passport.status).toBe(201);
+
+    const found = await request(app.getHttpServer())
+      .get('/search?q=881584')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .set('X-Family-Space-Id', familySpaceId);
+    expect(found.status).toBe(200);
+    expect(found.body.some((hit: any) => hit.id === passport.body.id)).toBe(true);
+  });
+
+  it('можно получить список файлов, прикреплённых к сущности', async () => {
+    const article = await request(app.getHttpServer())
+      .post('/knowledge-base/articles')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .set('X-Family-Space-Id', familySpaceId)
+      .send({ title: 'Статья без файлов', content: 'тест' });
+    expect(article.status).toBe(201);
+
+    const files = await request(app.getHttpServer())
+      .get(`/entities/${article.body.id}/files`)
+      .set('Authorization', `Bearer ${accessToken}`)
+      .set('X-Family-Space-Id', familySpaceId);
+    expect(files.status).toBe(200);
+    expect(files.body).toEqual([]);
+  });
+
+  it('можно создать документ с неопределённым типом (generic_document)', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/entities')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .set('X-Family-Space-Id', familySpaceId)
+      .send({
+        entityType: 'generic_document',
+        title: 'Неопознанный документ',
+        attributes: { notes: 'разберёмся позже' },
+      });
+    expect(res.status).toBe(201);
+  });
 });
