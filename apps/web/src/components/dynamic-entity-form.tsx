@@ -2,6 +2,7 @@
 
 import { EntityTypeSchema, FieldSchema } from '@/lib/entity-type-schemas';
 import { Field, Input, Textarea } from '@/components/ui';
+import EntityLinkSelect from '@/components/ui/entity-link-select';
 
 interface Props {
   schema: EntityTypeSchema;
@@ -136,8 +137,22 @@ function DynamicField({
     );
   }
 
-  // 'string' | 'link' (для link в этой итерации — обычное текстовое поле с id;
-  // полноценный выбор через поиск — техдолг, см. docs/TECH_DEBT.md)
+  // 'link' — теперь используется компонент с автодополнением и поиском
+  if (field.type === 'link' && field.linkTarget) {
+    return (
+      <EntityLinkSelect
+        label={label}
+        value={value as string | undefined}
+        onChange={onChange}
+        entityType={field.linkTarget}
+        placeholder={`Поиск ${field.label.toLowerCase()}...`}
+        disabled={disabled}
+        allowClear={!field.required}
+      />
+    );
+  }
+
+  // 'string' | 'link' без linkTarget (fallback для обратной совместимости)
   return (
     <Field label={label} hint={field.type === 'link' ? 'Вставьте id связанной записи' : undefined}>
       <Input

@@ -211,4 +211,47 @@ export class MembershipsService {
     });
     return override;
   }
+
+  async getPermissionOverrides(
+    userId: string,
+    familySpaceId: string,
+    membershipId: string,
+  ) {
+    const membership = await this.permissions.getMembership(userId, familySpaceId);
+    if (membership.role !== 'OWNER') {
+      throw new ForbiddenException('Просматривать исключения прав может только владелец');
+    }
+    return this.prisma.membershipPermissionOverride.findMany({
+      where: { membershipId },
+      orderBy: [{ resource: 'asc' }, { action: 'asc' }],
+    });
+  }
+
+  async deletePermissionOverride(
+    userId: string,
+    familySpaceId: string,
+    membershipId: string,
+    overrideId: string,
+  ) {
+    const membership = await this.permissions.getMembership(userId, familySpaceId);
+    if (membership.role !== 'OWNER') {
+      throw new ForbiddenException('Удалять исключения прав может только владелец');
+    }
+    const override = await this.prisma.membershipPermissionOverride.findUnique({
+      where: { id: overrideId },
+    });
+    if (!override || override.membershipId !== membershipId) {
+      throw new NotFoundException('Исключение не найдено');
+    }
+    await this.prisma.membershipPermissionOverride.delete({ where: { id: overrideId } });
+    await this.audit.log({
+      familySpaceId,
+      actorUserId: userId,
+      action: 'membership.permission_override_deleted',
+      resourceType: 'Membership',
+      resourceId: membershipId,
+      metadata: { overrideId, resource: override.resource, action: override.action },
+    });
+    return { success: true };
+  }
 }

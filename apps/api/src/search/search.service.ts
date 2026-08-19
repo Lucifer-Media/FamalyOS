@@ -23,9 +23,22 @@ export class SearchService {
     private readonly permissions: PermissionsService,
   ) {}
 
-  async search(userId: string, familySpaceId: string, query: string): Promise<SearchHit[]> {
+  async search(
+    userId: string,
+    familySpaceId: string,
+    query: string,
+    types?: string[],
+    limit: number = 50,
+  ): Promise<SearchHit[]> {
     const membership = await this.permissions.getMembership(userId, familySpaceId);
     const canConfidential = await this.permissions.can(membership, 'CONFIDENTIAL', 'VIEW');
+
+    // Фильтр по типам сущностей (для EntityLinkSelect)
+    const typeFilter = types && types.length > 0
+      ? `AND "entityType" IN (${types.map((_, i) => `$${i + 3}`).join(',')})`
+      : '';
+
+    const typeParams = types || [];
 
     // Полнотекстовый поиск через Postgres (to_tsvector/plainto_tsquery, конфигурация 'russian').
     const rows = await this.prisma.$queryRawUnsafe<any[]>(
@@ -39,12 +52,15 @@ export class SearchService {
       WHERE "familySpaceId" = $2
         AND status <> 'VOID'
         AND to_tsvector('russian', coalesce("searchText", '')) @@ plainto_tsquery('russian', $1)
+        ${typeFilter}
         ${canConfidential ? '' : `AND "confidentialityLevel" <> 'STRICTLY_CONFIDENTIAL'`}
       ORDER BY rank DESC
-      LIMIT 50
+      LIMIT $${types && types.length > 0 ? types.length + 3 : 3}
       `,
       query,
       familySpaceId,
+      ...typeParams,
+      limit,
     );
 
     const results: SearchHit[] = [];

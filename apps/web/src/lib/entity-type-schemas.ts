@@ -13,7 +13,7 @@ export interface EntityTypeSchema {
   entityType: string;
   labelSingular: string;
   labelPlural: string;
-  resource: 'DOCUMENTS' | 'MEDICAL';
+  resource: 'DOCUMENTS' | 'MEDICAL' | 'FINANCE';
   fields: FieldSchema[];
   childTypes?: string[];
   hierarchical?: boolean;
@@ -67,6 +67,10 @@ export const DOCUMENT_TYPE_GROUPS: { title: string; types: string[] }[] = [
   {
     title: 'Прочее',
     types: ['generic_document'],
+  },
+  {
+    title: 'Финансы',
+    types: ['bank_account', 'financial_operation', 'budget'],
   },
 ];
 
