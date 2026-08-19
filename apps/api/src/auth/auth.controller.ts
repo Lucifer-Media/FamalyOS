@@ -1,9 +1,9 @@
-import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Post, Req, UseGuards, Get } from '@nestjs/common';
 import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { RefreshDto, TwoFactorVerifyDto } from './dto/misc.dto';
+import { RefreshDto, TwoFactorVerifyDto, UseRecoveryCodeDto, RegenerateRecoveryCodesDto } from './dto/misc.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
@@ -23,6 +23,11 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto, @Req() req: Request) {
     return this.auth.login(dto, ctxFrom(req));
+  }
+
+  @Post('login/recovery')
+  loginWithRecovery(@Body() dto: UseRecoveryCodeDto, @Req() req: Request) {
+    return this.auth.loginWithRecoveryCode(dto.email, dto.recoveryCode, ctxFrom(req));
   }
 
   @Post('refresh')
@@ -51,5 +56,17 @@ export class AuthController {
   @Post('2fa/disable')
   disableTwoFactor(@CurrentUser() userId: string, @Body() body: { password: string }) {
     return this.auth.disableTwoFactor(userId, body.password);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('2fa/recovery/regenerate')
+  regenerateRecoveryCodes(@CurrentUser() userId: string, @Body() dto: RegenerateRecoveryCodesDto) {
+    return this.auth.regenerateRecoveryCodes(userId, dto.password);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('2fa/recovery/status')
+  getRecoveryCodesStatus(@CurrentUser() userId: string) {
+    return this.auth.getRecoveryCodesStatus(userId);
   }
 }

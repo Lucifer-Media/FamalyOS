@@ -1,9 +1,111 @@
+```
+# Dependencies
 node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+.yarn-cache/
+
+# Build outputs
 dist/
+build/
 .next/
-*.log
+.nuxt/
+out/
+public/build/
+coverage/
+.nyc_output/
+.tmp/
+
+# TypeScript/JavaScript
+*.tsbuildinfo
+*.js.map
+*.ts.map
+lib/
+temp/
+
+# Environment variables
 .env
+.env.local
 .env.*
 !.env.example
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Icon?
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
 coverage/
-uploads/
+.nyc_output/
+.jest/
+
+# Prisma
+prisma/migrations/
+prisma/schema.prisma.bak
+
+# Python (if applicable)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.mypy_cache/
+.tox/
+
+# Java (if applicable)
+*.class
+*.jar
+*.war
+*.ear
+.~lock.*
+target/
+.gradle/
+!gradle.properties
+!gradlew
+!gradlew.bat
+
+# Go (if applicable)
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.prof
+
+# Node.js (if applicable)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+jspm_packages/
+web_modules/
+*.module.js
+*.module.ts
+```

@@ -259,4 +259,116 @@ export class AuthService {
     });
     return { success: true };
   }
+
+  async loginWithRecoveryCode(email: string, recoveryCode: string, ctx: AuthContext) {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    const fail = async (reason: string) => {
+      await this.prisma.loginAttempt.create({
+        data: {
+          email,
+          userId: user?.id,
+          success: false,
+          reason,
+          ipAddress: ctx.ipAddress,
+          userAgent: ctx.userAgent,
+        },
+      });
+    };
+
+    if (!user || user.status !== 'ACTIVE') {
+      await fail('invalid_credentials');
+      throw new UnauthorizedException('Неверный email или recovery-код');
+    }
+
+    if (!user.twoFactorEnabled || !user.twoFactorRecoveryCodes) {
+      await fail('2fa_not_enabled');
+      throw new UnauthorizedException('2FA не включена или recovery-коды не настроены');
+    }
+
+    const recoveryCodesHashes = JSON.parse(user.twoFactorRecoveryCodes) as string[];
+    const codeMatch = recoveryCodesHashes.find((hash) => hashToken(recoveryCode) === hash);
+
+    if (!codeMatch) {
+      await fail('invalid_recovery_code');
+      throw new UnauthorizedException('Неверный recovery-код');
+    }
+
+    // Удаляем использованный код (он одноразовый)
+    const newHashes = recoveryCodesHashes.filter((h) => h !== codeMatch);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { twoFactorRecoveryCodes: JSON.stringify(newHashes) },
+    });
+
+    await this.prisma.loginAttempt.create({
+      data: {
+        email,
+        userId: user.id,
+        success: true,
+        reason: 'recovery_code',
+        ipAddress: ctx.ipAddress,
+        userAgent: ctx.userAgent,
+      },
+    });
+    await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    await this.audit.log({
+      actorUserId: user.id,
+      action: 'auth.login.recovery',
+      resourceType: 'User',
+      resourceId: user.id,
+      ipAddress: ctx.ipAddress,
+      userAgent: ctx.userAgent,
+    });
+
+    const memberships = await this.prisma.membership.findMany({
+      where: { userId: user.id, status: 'ACTIVE' },
+      include: { familySpace: true },
+    });
+
+    const tokens = await this.issueTokens(user.id, user.email);
+    return {
+      ...tokens,
+      user: { id: user.id, email: user.email, twoFactorEnabled: user.twoFactorEnabled },
+      familySpaces: memberships.map((m: (typeof memberships)[number]) => ({
+        id: m.familySpace.id,
+        name: m.familySpace.name,
+        role: m.role,
+      })),
+      recoveryCodesRemaining: newHashes.length,
+    };
+  }
+
+  async regenerateRecoveryCodes(userId: string, password: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const ok = await argon2.verify(user.passwordHash, password);
+    if (!ok) throw new UnauthorizedException('Неверный пароль');
+
+    const recoveryCodes = Array.from({ length: 10 }, () =>
+      crypto.randomBytes(5).toString('hex'),
+    );
+    const recoveryHashes = recoveryCodes.map((c) => hashToken(c));
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { twoFactorRecoveryCodes: JSON.stringify(recoveryHashes) },
+    });
+
+    await this.audit.log({
+      actorUserId: userId,
+      action: 'auth.2fa.recovery_codes_regenerated',
+      resourceType: 'User',
+      resourceId: userId,
+    });
+
+    return { recoveryCodes };
+  }
+
+  async getRecoveryCodesStatus(userId: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    if (!user.twoFactorRecoveryCodes) {
+      return { enabled: false, count: 0 };
+    }
+    const hashes = JSON.parse(user.twoFactorRecoveryCodes) as string[];
+    return { enabled: true, count: hashes.length };
+  }
 }
