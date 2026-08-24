@@ -8,12 +8,16 @@ RUN apt-get update -qq && apt-get install -y -qq openssl ca-certificates poppler
 # (интернет нужен вам как разработчику/на сервере при `docker build`,
 # приложению в рантайме сеть НЕ нужна вообще — конфиденциальные документы
 # никогда никуда не отправляются). Источник — официальный репозиторий
-# tesseract-ocr/tessdata_fast.
+# tesseract-ocr/tessdata (полноразмерные модели, выше точность, чем
+# tessdata_fast — для нашего сценария OCR запускается не в реальном времени,
+# а фоновым воркером, так что несколько лишних секунд на документ не критичны,
+# а точность важнее — особенно на документах с фоновыми узорами/гильошами,
+# как у паспортов и свидетельств).
 FROM base AS tessdata
 WORKDIR /tessdata
-RUN curl -fsSL -o rus.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/rus.traineddata \
- && curl -fsSL -o eng.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata \
- && curl -fsSL -o osd.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/osd.traineddata
+RUN curl -fsSL -o rus.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/rus.traineddata \
+ && curl -fsSL -o eng.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata \
+ && curl -fsSL -o osd.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/osd.traineddata
 
 FROM base AS deps
 COPY package.json ./

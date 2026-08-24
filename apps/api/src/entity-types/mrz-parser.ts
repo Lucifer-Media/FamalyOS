@@ -68,21 +68,31 @@ export function extractMrz(ocrText: string): MrzResult | null {
   const lines = ocrText
     .split('\n')
     .map((l) => l.trim().toUpperCase().replace(/\s+/g, ''))
-    .filter((l) => l.length >= 40); // MRZ-строки длинные, отсекаем короткие строки сразу
+    // MRZ-строки длинные — расширенный диапазон (40-48) даёт запас на то,
+    // что OCR теряет или добавляет 1-2 символа по краям строки.
+    .filter((l) => l.length >= 40 && l.length <= 48 && isMostlyMrzCharset(l));
 
-  // Строки MRZ иногда распознаются с потерей нескольких символов по краям —
-  // ищем две подряд идущие строки, начинающиеся с 'P' (тип "паспорт") и
-  // похожие по длине на 44 символа, с запасом на огрехи OCR (40-46).
+  // Раньше требовалось, чтобы строка буквально начиналась с 'P' (тип
+  // документа "паспорт") — хрупко, потому что OCR нередко путает первый
+  // символ строки. Вместо этого перебираем все похожие на MRZ пары строк
+  // и ДОВЕРЯЕМ только той, где контрольная цифра (номер документа или дата
+  // рождения) реально сошлась — совпадение контрольной суммы почти
+  // невозможно по случайности, это надёжный признак, что строка настоящая,
+  // а не шум.
   for (let i = 0; i < lines.length - 1; i++) {
-    const line1 = lines[i];
-    const line2 = lines[i + 1];
-    if (!line1.startsWith('P') && !line1.startsWith('P<')) continue;
-    if (line1.length < 40 || line1.length > 46) continue;
-    if (line2.length < 40 || line2.length > 46) continue;
-
-    return parseMrzLines(padOrTrim(line1, 44), padOrTrim(line2, 44));
+    const candidate = parseMrzLines(padOrTrim(lines[i], 44), padOrTrim(lines[i + 1], 44));
+    if (candidate && (candidate.documentNumberValid || candidate.birthDateValid)) {
+      return candidate;
+    }
   }
   return null;
+}
+
+/** Доля символов строки, входящих в алфавит MRZ (A-Z, 0-9, '<') — грубый
+ * фильтр "похоже на MRZ", чтобы не пытаться парсить явно нерелевантные строки. */
+function isMostlyMrzCharset(line: string): boolean {
+  const mrzChars = line.replace(/[^A-Z0-9<]/g, '').length;
+  return mrzChars / line.length >= 0.85;
 }
 
 function padOrTrim(s: string, len: number): string {

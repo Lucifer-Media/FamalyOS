@@ -38,4 +38,21 @@ describe('MRZ-парсер загранпаспорта (ICAO 9303 TD3)', () => 
     const result = extractMrz(`${ICAO_LINE1}\n${brokenLine2}`);
     expect(result?.documentNumberValid).toBe(false);
   });
+
+  it('РЕГРЕССИЯ: находит MRZ, даже если OCR исказил самый первый символ строки (раньше требовалось строгое начало с "P")', () => {
+    // 'P' в начале строки распознан OCR как 'F' — раньше это ломало поиск целиком.
+    const corruptedLine1 = 'F' + ICAO_LINE1.slice(1);
+    const text = `какой-то шум OCR перед MRZ\n${corruptedLine1}\n${ICAO_LINE2}\nшум после`;
+    const result = extractMrz(text);
+    // Контрольная сумма строки 2 (номер документа/дата рождения) всё равно сходится —
+    // этого достаточно, чтобы доверять MRZ, даже если тип документа в line1 искажён.
+    expect(result).not.toBeNull();
+    expect(result?.documentNumberValid).toBe(true);
+    expect(result?.documentNumber).toBe('L898902C');
+  });
+
+  it('строки, явно не похожие на MRZ (мало букв/цифр/<), не рассматриваются вообще', () => {
+    const notMrz = 'Это обычное предложение на пятьдесят символов длиной примерно';
+    expect(extractMrz(notMrz)).toBeNull();
+  });
 });

@@ -136,7 +136,15 @@ export default function PassportRfDetailPage() {
     }
   }
 
-  if (authLoading || !isAuthenticated || !schema) return null;
+  if (authLoading || !isAuthenticated) return null;
+
+  if (!schema) {
+    return (
+      <AppShell>
+        <p className="text-sm text-ink/50">Загрузка…</p>
+      </AppShell>
+    );
+  }
 
   const grouped = ['passport_registration', 'passport_marriage', 'passport_child_record'].map((type) => ({
     type,

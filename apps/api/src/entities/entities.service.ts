@@ -128,7 +128,64 @@ export class EntitiesService {
       metadata: { title: entity.title },
     });
 
+    await this.autoLinkFromAttributes(userId, familySpaceId, entity.id, entity.attributes as Record<string, unknown>);
+
     return entity;
+  }
+
+  /**
+   * Системная поддержка связей (раздел 27 ТЗ Итерации 2 — "связи между
+   * сущностями это один из важнейших результатов итерации"). Поля со
+   * схемным типом 'link' (accountId, meterId, propertyId, doctorId и т.д.)
+   * раньше были просто строкой-идентификатором внутри JSONB attributes —
+   * ссылка существовала только "по соглашению", её не было видно в графе
+   * связей (`GET /entities/:id/links`). Теперь при создании/изменении ЛЮБОЙ
+   * сущности с полем типа 'link' автоматически создаётся настоящая
+   * EntityLink-связь — это касается не только финансов/ЖКХ, а вообще всех
+   * типов с полями связи (рецепт→врач, авто-техника→локация и т.д.).
+   * Работает "по возможности": если указанный id не существует в этом же
+   * пространстве, связь просто не создаётся — не ломает сохранение записи.
+   */
+  private async autoLinkFromAttributes(
+    userId: string,
+    familySpaceId: string,
+    entityId: string,
+    attributes: Record<string, unknown>,
+  ): Promise<void> {
+    const entity = await this.prisma.entity.findUnique({ where: { id: entityId } });
+    if (!entity) return;
+    const schema = getEntityTypeSchema(entity.entityType);
+    if (!schema) return;
+
+    const linkFields = schema.fields.filter((f) => f.type === 'link');
+    if (linkFields.length === 0) return;
+
+    for (const field of linkFields) {
+      const targetId = attributes?.[field.key];
+      if (typeof targetId !== 'string' || !targetId.trim()) continue;
+
+      const target = await this.prisma.entity.findUnique({ where: { id: targetId } });
+      if (!target || target.familySpaceId !== familySpaceId) continue; // ссылка на несуществующее/чужое — молча пропускаем
+
+      await this.prisma.entityLink
+        .upsert({
+          where: {
+            sourceEntityId_targetEntityId_linkType: {
+              sourceEntityId: entityId,
+              targetEntityId: targetId,
+              linkType: field.key,
+            },
+          },
+          create: {
+            sourceEntityId: entityId,
+            targetEntityId: targetId,
+            linkType: field.key,
+            createdByUserId: userId,
+          },
+          update: {},
+        })
+        .catch(() => undefined); // ограничение уникальности могло отличаться в старой БД — не критично
+    }
   }
 
   async findOne(userId: string, familySpaceId: string, id: string) {
@@ -241,6 +298,8 @@ export class EntitiesService {
       resourceType: entity.entityType,
       resourceId: id,
     });
+
+    await this.autoLinkFromAttributes(userId, familySpaceId, id, updated.attributes as Record<string, unknown>);
 
     return updated;
   }

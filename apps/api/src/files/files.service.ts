@@ -4,6 +4,7 @@ import { PrismaService } from '../common/prisma.service';
 import { PermissionsService } from '../common/permissions.service';
 import { AuditService } from '../audit/audit.service';
 import { LocalStorageService } from './local-storage.service';
+import { decodeOriginalFilename } from './decode-filename.util';
 
 @Injectable()
 export class FilesService {
@@ -23,13 +24,14 @@ export class FilesService {
     const membership = await this.permissions.getMembership(userId, familySpaceId);
     await this.permissions.assertCan(membership, 'FILES', 'CREATE');
 
-    const saved = await this.storage.save(familySpaceId, file.buffer, file.originalname);
+    const originalName = decodeOriginalFilename(file.originalname);
+    const saved = await this.storage.save(familySpaceId, file.buffer, originalName);
 
     const fileObject = await this.prisma.$transaction(async (tx: any) => {
       const created = await tx.fileObject.create({
         data: {
           familySpaceId,
-          originalName: file.originalname,
+          originalName,
           mimeType: file.mimetype,
           sizeBytes: saved.sizeBytes,
           checksumSha256: saved.checksumSha256,
@@ -83,7 +85,7 @@ export class FilesService {
     if (!existing || existing.familySpaceId !== familySpaceId) {
       throw new NotFoundException('Файл не найден');
     }
-    const saved = await this.storage.save(familySpaceId, file.buffer, file.originalname);
+    const saved = await this.storage.save(familySpaceId, file.buffer, decodeOriginalFilename(file.originalname));
     const nextVersion = existing.currentVersion + 1;
 
     const updated = await this.prisma.$transaction(async (tx: any) => {

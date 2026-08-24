@@ -73,7 +73,7 @@ export default function LocationsPage() {
     }
   }
 
-  if (loading || !isAuthenticated || !schema) return null;
+  if (loading || !isAuthenticated) return null;
 
   return (
     <AppShell>
@@ -82,12 +82,14 @@ export default function LocationsPage() {
           <h1 className="font-display text-2xl font-semibold text-ink">Локации</h1>
           <p className="mt-1 text-sm text-ink/60">Страна → Город → Дом → Квартира → Комната.</p>
         </div>
-        <Button onClick={() => setCreating(creating === 'root' ? null : 'root')}>
+        <Button onClick={() => setCreating(creating === 'root' ? null : 'root')} disabled={!schema}>
           <Plus size={16} /> Добавить корневую локацию
         </Button>
       </div>
 
-      {creating === 'root' && (
+      {!schema && <p className="mt-4 text-sm text-ink/50">Загрузка…</p>}
+
+      {creating === 'root' && schema && (
         <Card className="mt-4">
           <DynamicEntityForm schema={schema} values={values} onChange={(k, v) => setValues((s) => ({ ...s, [k]: v }))} />
           <div className="mt-3 flex gap-2">

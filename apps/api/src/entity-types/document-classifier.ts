@@ -40,7 +40,7 @@ interface ClassifierRule {
 
 /** Ниже этого порога классификатор не предлагает тип вообще — лучше честно
  * попросить пользователя выбрать вручную, чем угадать неправильно. */
-const MIN_CONFIDENCE_TO_SUGGEST = 0.55;
+export const MIN_CONFIDENCE_TO_SUGGEST = 0.55;
 
 const RULES: ClassifierRule[] = [
   {
@@ -190,6 +190,17 @@ const RULES: ClassifierRule[] = [
     keywords: ['кассовый чек', 'фискальный признак', 'приход'],
     strongKeywords: ['кассовый чек', 'фн ', 'фд ', 'фп '],
   },
+  {
+    entityType: 'utility_bill',
+    keywords: ['коммунальных услуг', 'лицевой счёт', 'жилого помещения', 'абонент №'],
+    strongKeywords: [
+      'платёжный документ',
+      'платежный документ',
+      'счёт за электроэнергию',
+      'счет за электроэнергию',
+      'оплата за услуги водоснабжения',
+    ],
+  },
 ];
 
 export function classifyDocumentText(text: string): ClassificationResult | null {
@@ -210,9 +221,15 @@ export function classifyDocumentText(text: string): ClassificationResult | null 
     if (isSuppressed) continue; // например: "паспорт" упомянут внутри трудового договора — не считаем паспортом
 
     const matched = rule.keywords.filter((k) => normalized.includes(k));
-    if (matched.length === 0) continue;
-
     const strongMatched = (rule.strongKeywords ?? []).filter((k) => normalized.includes(k));
+    // РЕАЛЬНЫЙ БАГ (найден на квитанции Мосэнергосбыта): раньше правило
+    // пропускалось целиком, если ни одно "слабое" ключевое слово не
+    // совпало — даже если "сильная" уникальная фраза ("СЧЁТ ЗА
+    // ЭЛЕКТРОЭНЕРГИЮ") совпала точно. Слабый и сильный списки не всегда
+    // пересекаются лексически, поэтому сильное совпадение само по себе
+    // должно считаться кандидатом, не требуя дополнительно слабого.
+    if (matched.length === 0 && strongMatched.length === 0) continue;
+
     const confidence = strongMatched.length > 0 ? 0.85 : Math.min(0.3 + matched.length * 0.15, 0.6);
 
     if (!best || confidence > best.confidence) {
@@ -225,6 +242,67 @@ export function classifyDocumentText(text: string): ClassificationResult | null 
     return null;
   }
   return best;
+}
+
+/**
+ * Реальный баг из практики: документ с плохим OCR (уверенность ~33%) дал
+ * классификацию с уверенностью ~85%, потому что в тексте-мусоре случайно
+ * встретилась сильная ключевая фраза («заключении брака» затесалось среди
+ * шума). НО простое умножение на среднюю уверенность OCR-движка оказалось
+ * слишком грубым инструментом: на реальных сканах документов с защитным
+ * узором (паспорта, свидетельства) Tesseract часто даёт низкую СРЕДНЮЮ
+ * уверенность (30-50%), даже когда конкретная фраза («СВИДЕТЕЛЬСТВО О
+ * ЗАКЛЮЧЕНИИ БРАКА») распознана совершенно чётко — просто остальная часть
+ * кадра (узорный фон, печать) даёт много "шумных" символов, портящих
+ * средний показатель.
+ *
+ * Правильный критерий — не "насколько в среднем уверен OCR", а "какая доля
+ * текста вообще похожа на настоящие слова, а не на случайный набор
+ * символов". Проверено на реальных примерах:
+ *   - мусорный текст из бага:              ~12% токенов — похожи на слова;
+ *   - реальный скан свидетельства о браке: ~25% токенов — похожи на слова;
+ *   - реальный скан паспорта:              ~50-56% токенов — похожи на слова.
+ * Порог 15% разделяет эти случаи корректно на реальных данных.
+ */
+const NOISE_TOKEN_RATIO_THRESHOLD = 0.15;
+
+/** Доля "похожих на слова" токенов (3+ подряд идущих букв) в тексте — грубая,
+ * но на практике достаточно точная оценка того, насколько тексту можно
+ * доверять в принципе (в отличие от среднего confidence самого OCR-движка). */
+export function tokenReadabilityRatio(text: string): number {
+  const tokens = text.split(/[\s|]+/).filter(Boolean);
+  if (tokens.length === 0) return 0;
+  const wordTokens = tokens.filter((t) => /^[А-ЯЁа-яёA-Za-z]{3,}$/.test(t));
+  return wordTokens.length / tokens.length;
+}
+
+export function applyOcrQualityToClassification(
+  classification: ClassificationResult | null,
+  ocrText: string,
+  ocrConfidence: number | null,
+): ClassificationResult | null {
+  if (!classification) return null;
+  // ocrConfidence === null означает "не применимо" (например, встроенный
+  // текстовый слой PDF, а не распознавание образа) — тексту можно доверять
+  // как есть, поправка не нужна.
+  if (ocrConfidence === null) return classification;
+
+  const readability = tokenReadabilityRatio(ocrText);
+  if (readability < NOISE_TOKEN_RATIO_THRESHOLD) {
+    // Текст настолько зашумлён, что совпадение ключевой фразы, скорее
+    // всего, случайность — не предлагаем тип вообще.
+    return null;
+  }
+
+  // Мягкая поправка на уверенность самого движка — не топит хорошие
+  // совпадения на читаемом (пусть и не идеальном) тексте, но всё же слегка
+  // снижает уверенность при очень низком OCR confidence.
+  const qualityFactor = 0.6 + 0.4 * Math.max(ocrConfidence, 0);
+  const adjustedConfidence = Math.min(classification.confidence * qualityFactor, classification.confidence);
+  if (adjustedConfidence < MIN_CONFIDENCE_TO_SUGGEST) {
+    return null;
+  }
+  return { ...classification, confidence: adjustedConfidence };
 }
 
 // ---------- Извлечение реквизитов (тоже эвристика, не гарантия) ----------
@@ -370,8 +448,62 @@ export function extractSuggestedAttributes(
     }
   }
 
+  if (entityType === 'utility_bill') {
+    // "Итого к оплате" встречается в разных формулировках у разных
+    // поставщиков (УК, Мосэнергосбыт, Мосводоканал) — проверено на реальных
+    // квитанциях, приложенных пользователем.
+    const totalMatch = text.match(
+      /итого\s*к\s*оплате[,.]?\s*(?:руб\.?)?[:\s]*(\d[\d\s]*[.,]\d{2})/i,
+    );
+    if (totalMatch) setField('totalAmount', parseRuMoneyToken(totalMatch[1]), 0.7);
+
+    const periodMatch = text.match(
+      /(январ[ья]|феврал[ья]|март[а]?|апрел[ья]|ма[йя]|июн[ья]|июл[ья]|август[а]?|сентябр[ья]|октябр[ья]|ноябр[ья]|декабр[ья])\s+(\d{4})/i,
+    );
+    if (periodMatch) {
+      const monthNum = RU_MONTHS[periodMatch[1].toLowerCase().replace(/[ья]$/, '')] ?? RU_MONTHS_FULL[periodMatch[1].toLowerCase()];
+      if (monthNum) setField('period', `${periodMatch[2]}-${monthNum}`, 0.6);
+    }
+
+    const dueDateMatch = text.match(/срок\s+оплаты\s+до\s+(\d{2}\.\d{2}\.\d{4})/i);
+    if (dueDateMatch) {
+      const iso = dueDateMatch[1].match(/(\d{2})\.(\d{2})\.(\d{4})/);
+      if (iso) setField('dueDate', `${iso[3]}-${iso[2]}-${iso[1]}`, 0.6);
+    }
+
+    // Расшифровка по показаниям счётчиков — извлекается ТЕКСТОМ, не
+    // пытаемся автоматически создавать/привязывать конкретные utility_meter:
+    // форматы поставщиков слишком разные (УК: "ГОРЯЧЕЕ В/С 1345356 34,88",
+    // Мосэнергосбыт: тарифные зоны Т1/Т2/Т3, Мосводоканал: таблица приборов
+    // с датами поверки) — риск неверной привязки выше пользы автоматизации.
+    // Пользователь видит расшифровку и создаёт показания вручную/через
+    // отдельную форму, сверяя с этим текстом.
+    const meterLines = text
+      .split('\n')
+      .filter(
+        (line) =>
+          /электро|вода|хвс|гвс|в\/с|отоплени|газ|водоотведени|водоснабжени|теплоснабжени/i.test(line) &&
+          /\d/.test(line),
+      )
+      .slice(0, 30);
+    if (meterLines.length > 0) setField('breakdown', meterLines.join('\n'), 0.5);
+  }
+
   return { attributes: attrs, fieldConfidence };
 }
+
+function parseRuMoneyToken(raw: string): number {
+  return Number(raw.replace(/\s/g, '').replace(',', '.'));
+}
+
+const RU_MONTHS_FULL: Record<string, string> = {
+  январь: '01', февраль: '02', март: '03', апрель: '04', май: '05', июнь: '06',
+  июль: '07', август: '08', сентябрь: '09', октябрь: '10', ноябрь: '11', декабрь: '12',
+};
+const RU_MONTHS: Record<string, string> = {
+  январ: '01', феврал: '02', март: '03', апрел: '04', ма: '05', июн: '06',
+  июл: '07', август: '08', сентябр: '09', октябр: '10', ноябр: '11', декабр: '12',
+};
 
 export interface MedicalPartyGuesses {
   patientFullName?: string;

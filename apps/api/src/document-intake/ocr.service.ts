@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import * as os from 'os';
+import { tokenReadabilityRatio } from '../entity-types/document-classifier';
 
 const execFileAsync = promisify(execFile);
 
@@ -158,33 +159,75 @@ export class OcrService {
     buffer: Buffer,
   ): Promise<{ text: string; confidence: number | null; errorMessage?: string }> {
     try {
-      const preprocessed = await this.preprocessImage(buffer);
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { createWorker } = require('tesseract.js');
-      // langPath указывает на ЛОКАЛЬНУЮ директорию с .traineddata, встроенную
-      // в образ на этапе сборки — cachePath тоже локальный, gzip:false,
-      // чтобы не пытаться скачивать/распаковывать из сети при отсутствии кэша.
-      const worker = await createWorker('rus+eng', 1, {
-        langPath: TESSDATA_DIR,
-        cachePath: TESSDATA_DIR,
-        gzip: false,
-      });
-      try {
-        // PSM 6 ("единый блок текста") обычно работает надёжнее, чем
-        // автоматическая сегментация по умолчанию, для фото/сканов документов
-        // с плотным текстом (паспорт, договор) — уменьшает "мусорный" вывод.
-        await worker.setParameters({ tessedit_pageseg_mode: '6' });
-        const { data } = await worker.recognize(preprocessed);
-        return {
-          text: data.text ?? '',
-          confidence: typeof data.confidence === 'number' ? data.confidence / 100 : null,
-        };
-      } finally {
-        await worker.terminate();
+      // Три варианта предобработки — эмпирически проверено на реальных
+      // документах (паспорта, свидетельства с защитным узором): в
+      // зависимости от конкретного скана лучший результат даёт то один,
+      // то другой вариант, поэтому пробуем несколько и берём лучший.
+      //
+      // ВАЖНО: "лучший" определяется НЕ по confidence, который возвращает
+      // сам Tesseract. На реальном тесте (свидетельство о браке) движок
+      // дал confidence=47% для варианта, где текст был практически чистым
+      // шумом (доля читаемых слов ~9%), и confidence=35% для варианта,
+      // где чётко читались "СВИДЕТЕЛЬСТВО", "О ЗАКЛЮЧЕНИИ БРАКА",
+      // "Российская Федерация" (доля читаемых слов ~36%). Самозаявленная
+      // уверенность Tesseract на документах с декоративным фоном
+      // ненадёжна как критерий сравнения — она отражает "насколько текст
+      // похож на буквы" (декоративная рамка тоже может дать высокий
+      // формальный score), а не "сколько распознано настоящих слов".
+      // Поэтому сравниваем варианты по доле читаемых слов
+      // (tokenReadabilityRatio — та же метрика, что защищает классификатор
+      // от случайных совпадений в шуме), а не по числу от движка.
+      const attemptGrayscale = await this.runTesseractOnce(await this.preprocessImage(buffer, 'grayscale'));
+      let best = attemptGrayscale;
+      let bestReadability = tokenReadabilityRatio(attemptGrayscale.text);
+
+      if (bestReadability < 0.35) {
+        const attemptBinarize = await this.runTesseractOnce(await this.preprocessImage(buffer, 'binarize'));
+        const binarizeReadability = tokenReadabilityRatio(attemptBinarize.text);
+        if (binarizeReadability > bestReadability) {
+          best = attemptBinarize;
+          bestReadability = binarizeReadability;
+        }
+
+        const attemptMedian = await this.runTesseractOnce(await this.preprocessImage(buffer, 'median'));
+        const medianReadability = tokenReadabilityRatio(attemptMedian.text);
+        if (medianReadability > bestReadability) {
+          best = attemptMedian;
+          bestReadability = medianReadability;
+        }
       }
+      return best;
     } catch (err) {
       this.logger.error('Ошибка Tesseract OCR', err as Error);
       return { text: '', confidence: 0, errorMessage: 'OCR не удался: ' + (err as Error).message };
+    }
+  }
+
+  private async runTesseractOnce(
+    preprocessed: Buffer,
+  ): Promise<{ text: string; confidence: number | null; errorMessage?: string }> {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { createWorker } = require('tesseract.js');
+    // langPath указывает на ЛОКАЛЬНУЮ директорию с .traineddata, встроенную
+    // в образ на этапе сборки — cachePath тоже локальный, gzip:false,
+    // чтобы не пытаться скачивать/распаковывать из сети при отсутствии кэша.
+    const worker = await createWorker('rus+eng', 1, {
+      langPath: TESSDATA_DIR,
+      cachePath: TESSDATA_DIR,
+      gzip: false,
+    });
+    try {
+      // PSM 6 ("единый блок текста") обычно работает надёжнее, чем
+      // автоматическая сегментация по умолчанию, для фото/сканов документов
+      // с плотным текстом (паспорт, договор) — уменьшает "мусорный" вывод.
+      await worker.setParameters({ tessedit_pageseg_mode: '6' });
+      const { data } = await worker.recognize(preprocessed);
+      return {
+        text: data.text ?? '',
+        confidence: typeof data.confidence === 'number' ? data.confidence / 100 : null,
+      };
+    } finally {
+      await worker.terminate();
     }
   }
 
@@ -196,19 +239,38 @@ export class OcrService {
    * документов часто выдаёт "мусорный" текст (низкая уверенность,
    * бессмысленные символы) — это и было основной причиной низкого
    * качества распознавания в первых тестах.
+   *
+   * @param binarize — вторая попытка (см. runTesseract): жёсткая бинаризация
+   * (чёрно-белый порог) вместо просто градаций серого — помогает на
+   * документах с узорчатым/цветным фоном (паспорта, свидетельства), но
+   * иногда хуже на обычных чистых сканах, поэтому используется только как
+   * запасной вариант, а не по умолчанию.
    */
-  private async preprocessImage(buffer: Buffer): Promise<Buffer> {
+  private async preprocessImage(buffer: Buffer, mode: 'grayscale' | 'binarize' | 'median'): Promise<Buffer> {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const sharp = require('sharp');
       const image = sharp(buffer, { failOn: 'none' }).rotate(); // rotate() без аргументов — авто-поворот по EXIF
       const metadata = await image.metadata();
-      const targetWidth = 2200; // эмпирически неплохой компромисс для печатного текста документов
+      // 2800px — увеличено по опыту реальных документов с фоновыми узорами
+      // (паспорта, свидетельства): больше пикселей помогает LSTM-модели
+      // Tesseract отличать текст от фоновой печати.
+      const targetWidth = 2800;
       const needsUpscale = (metadata.width ?? 0) > 0 && (metadata.width as number) < targetWidth;
 
-      let pipeline = image.grayscale().normalize().sharpen();
+      let pipeline = image.grayscale();
+      if (mode === 'median') {
+        // Медианный фильтр (окно 3×3) размывает мелкие детали (гильош-узор
+        // защитного фона) сильнее, чем основные штрихи текста — на практике
+        // хорошо "очищает" официальные бланки перед бинаризацией.
+        pipeline = pipeline.median(3);
+      }
+      pipeline = pipeline.normalize().sharpen();
       if (needsUpscale) {
         pipeline = pipeline.resize({ width: targetWidth, kernel: 'lanczos3' });
+      }
+      if (mode === 'binarize' || mode === 'median') {
+        pipeline = pipeline.threshold(mode === 'median' ? 160 : 150);
       }
       return await pipeline.toFormat('png').toBuffer();
     } catch (err) {

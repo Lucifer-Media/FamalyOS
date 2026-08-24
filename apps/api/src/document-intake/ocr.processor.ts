@@ -4,7 +4,7 @@ import { Logger } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { FilesService } from '../files/files.service';
 import { OcrService } from './ocr.service';
-import { classifyDocumentText, extractSuggestedAttributes } from '../entity-types/document-classifier';
+import { classifyDocumentText, extractSuggestedAttributes, applyOcrQualityToClassification } from '../entity-types/document-classifier';
 import { AuditService } from '../audit/audit.service';
 import { OCR_QUEUE_NAME } from './ocr-queue.module';
 import { OcrJobData } from './document-intake.service';
@@ -58,14 +58,20 @@ export class OcrProcessor extends WorkerHost {
         },
       });
 
-      const entityType =
-        targetEntity?.entityType ??
-        (ocrResult.extractedText ? classifyDocumentText(ocrResult.extractedText)?.entityType : undefined);
-      const classification = targetEntity
-        ? { entityType: targetEntity.entityType, confidence: 1 }
+      const rawClassification = targetEntity
+        ? { entityType: targetEntity.entityType, confidence: 1, matchedKeywords: [] as string[] }
         : ocrResult.extractedText
           ? classifyDocumentText(ocrResult.extractedText)
           : null;
+      // Понижаем/обнуляем уверенность классификации, если сам OCR распознал
+      // текст ненадёжно — иначе случайное совпадение ключевой фразы в шуме
+      // может дать обманчиво высокую уверенность (см. комментарий в
+      // applyOcrQualityToClassification).
+      const classification = targetEntity
+        ? rawClassification
+        : applyOcrQualityToClassification(rawClassification, ocrResult.extractedText, ocrResult.confidence);
+
+      const entityType = classification?.entityType;
 
       const extraction =
         entityType && ocrResult.extractedText

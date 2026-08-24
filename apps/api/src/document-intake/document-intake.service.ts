@@ -4,7 +4,7 @@ import { Queue } from 'bullmq';
 import { PrismaService } from '../common/prisma.service';
 import { PermissionsService } from '../common/permissions.service';
 import { AuditService } from '../audit/audit.service';
-import { classifyDocumentText, extractSuggestedAttributes } from '../entity-types/document-classifier';
+import { classifyDocumentText, extractSuggestedAttributes, applyOcrQualityToClassification } from '../entity-types/document-classifier';
 import { getEntityTypeSchema } from '../entity-types/entity-type-registry';
 import { extractMedicalPartyGuesses, findBestNameMatch } from '../entity-types/document-classifier';
 import { EntitiesService } from '../entities/entities.service';
@@ -239,7 +239,9 @@ export class DocumentIntakeService {
       throw new BadRequestException(`Страница ${pageNumber} не найдена в этом документе`);
     }
 
-    const classification = page.text ? classifyDocumentText(page.text) : null;
+    const classification = page.text
+      ? applyOcrQualityToClassification(classifyDocumentText(page.text), page.text, page.confidence)
+      : null;
     const extraction =
       classification && page.text ? extractSuggestedAttributes(classification.entityType, page.text) : { attributes: {}, fieldConfidence: {} };
 

@@ -107,6 +107,7 @@ model FamilySpace {
   auditLogs     AuditLog[]
   permissionOverrides MembershipPermissionOverride[]
   documentIntakes DocumentIntake[]
+  financialTransactionExternalIds FinancialTransactionExternalId[]
 
   @@map("family_spaces")
 }
@@ -284,6 +285,8 @@ model Entity {
   documentIntakes      DocumentIntake[] @relation("ConfirmedEntity")
   reprocessIntakes     DocumentIntake[] @relation("TargetEntity")
   personLinks          EntityPersonLink[]
+  externalIdsAsAccount FinancialTransactionExternalId[] @relation("FinanceAccountExternalIds")
+  externalIdAsTransaction FinancialTransactionExternalId? @relation("FinanceTransactionExternalId")
 
   @@index([familySpaceId, entityType])
   @@index([familySpaceId, status])
@@ -310,6 +313,24 @@ model EntityPersonLink {
   @@unique([entityId, personId, relationRole])
   @@index([personId])
   @@map("entity_person_links")
+}
+
+// Быстрая дедупликация при импорте банковских выписок (см.
+// finance/bank-statement-parser.ts) — без этого пришлось бы сканировать
+// JSONB attributes тысяч операций на каждый повторный импорт той же выписки.
+model FinancialTransactionExternalId {
+  id                   String   @id @default(uuid())
+  familySpaceId        String
+  familySpace          FamilySpace @relation(fields: [familySpaceId], references: [id])
+  accountEntityId      String
+  accountEntity        Entity   @relation("FinanceAccountExternalIds", fields: [accountEntityId], references: [id])
+  externalId           String   // FITID из OFX или хэш от даты+суммы+описания для CSV/XLSX
+  transactionEntityId  String   @unique
+  transactionEntity    Entity   @relation("FinanceTransactionExternalId", fields: [transactionEntityId], references: [id])
+  createdAt            DateTime @default(now())
+
+  @@unique([accountEntityId, externalId])
+  @@map("financial_transaction_external_ids")
 }
 
 // История версий сущности — модель "как в Git": откат создаёт новую версию,

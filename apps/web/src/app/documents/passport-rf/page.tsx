@@ -50,7 +50,15 @@ export default function PassportRfListPage() {
     }
   }
 
-  if (authLoading || !isAuthenticated || !schema) return null;
+  if (authLoading || !isAuthenticated) return null;
+
+  if (!schema) {
+    return (
+      <AppShell>
+        <p className="text-sm text-ink/50">Загрузка…</p>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell>

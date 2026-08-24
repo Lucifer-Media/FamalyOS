@@ -202,4 +202,45 @@ describe('Итерация 2: специализированные типы (e2e
       });
     expect(res.status).toBe(201);
   });
+
+  it('РЕГРЕССИЯ: поле типа link в attributes автоматически создаёт настоящую EntityLink-связь (раздел 27 ТЗ)', async () => {
+    const account = await request(app.getHttpServer())
+      .post('/entities')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .set('X-Family-Space-Id', familySpaceId)
+      .send({
+        entityType: 'bank_account',
+        title: 'Тестовый счёт',
+        attributes: { bankName: 'Тестбанк', accountType: 'CHECKING', currency: 'RUB' },
+      });
+    expect(account.status).toBe(201);
+
+    const transaction = await request(app.getHttpServer())
+      .post('/entities')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .set('X-Family-Space-Id', familySpaceId)
+      .send({
+        entityType: 'financial_transaction',
+        title: 'Тестовая операция',
+        attributes: {
+          date: '2026-08-01',
+          amount: -500,
+          currency: 'RUB',
+          accountId: account.body.id, // это поле типа 'link' в реестре
+          description: 'Тест',
+          source: 'MANUAL',
+        },
+      });
+    expect(transaction.status).toBe(201);
+
+    // Проверяем, что связь появилась в графе, а не осталась просто строкой в JSON.
+    const links = await request(app.getHttpServer())
+      .get(`/entities/${transaction.body.id}/links`)
+      .set('Authorization', `Bearer ${accessToken}`)
+      .set('X-Family-Space-Id', familySpaceId);
+    expect(links.status).toBe(200);
+    expect(links.body.outgoing.some((l: any) => l.targetEntityId === account.body.id && l.linkType === 'accountId')).toBe(
+      true,
+    );
+  });
 });

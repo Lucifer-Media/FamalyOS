@@ -17,6 +17,7 @@ import { EntityTypesModule } from './entity-types/entity-types.module';
 import { DocumentIntakeModule } from './document-intake/document-intake.module';
 import { PassportRfModule } from './passport-rf/passport-rf.module';
 import { FirstAidKitsModule } from './first-aid-kits/first-aid-kits.module';
+import { FinanceModule } from './finance/finance.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { FirstAidKitsModule } from './first-aid-kits/first-aid-kits.module';
     DocumentIntakeModule,
     PassportRfModule,
     FirstAidKitsModule,
+    FinanceModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
   controllers: [HealthController],
