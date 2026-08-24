@@ -2,6 +2,7 @@
 
 import { EntityTypeSchema, FieldSchema } from '@/lib/entity-type-schemas';
 import { Field, Input, Textarea } from '@/components/ui';
+import EntityLinkSelect from '@/components/ui/entity-link-select';
 
 interface Props {
   schema: EntityTypeSchema;
@@ -136,10 +137,22 @@ function DynamicField({
     );
   }
 
-  // 'string' | 'link' (для link в этой итерации — обычное текстовое поле с id;
-  // полноценный выбор через поиск — техдолг, см. docs/TECH_DEBT.md)
+  if (field.type === 'link') {
+    return (
+      <Field label={label}>
+        <EntityLinkSelect
+          value={(value as string) ?? undefined}
+          onChange={(id) => onChange(id ?? undefined)}
+          entityType={field.linkTarget ?? ''}
+          disabled={disabled}
+        />
+      </Field>
+    );
+  }
+
+  // 'string'
   return (
-    <Field label={label} hint={field.type === 'link' ? 'Вставьте id связанной записи' : undefined}>
+    <Field label={label}>
       <Input
         value={(value as string) ?? ''}
         onChange={(e) => onChange(e.target.value || undefined)}

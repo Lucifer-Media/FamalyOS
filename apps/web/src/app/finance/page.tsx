@@ -59,9 +59,17 @@ export default function FinancePage() {
           <h1 className="font-display text-2xl font-semibold text-ink">Финансы</h1>
           <p className="mt-1 text-sm text-ink/60">Счета, операции, импорт выписок и сверка с ЖКХ.</p>
         </div>
-        <Button onClick={() => setCreating((v) => !v)} disabled={!schema}>
-          <Plus size={16} /> Добавить счёт
-        </Button>
+        <div className="flex gap-2">
+          <Link href="/finance/budgets">
+            <Button variant="secondary">Бюджеты</Button>
+          </Link>
+          <Link href="/finance/analytics">
+            <Button variant="secondary">Аналитика</Button>
+          </Link>
+          <Button onClick={() => setCreating((v) => !v)} disabled={!schema}>
+            <Plus size={16} /> Добавить счёт
+          </Button>
+        </div>
       </div>
 
       {!schema && !error && <p className="mt-4 text-sm text-ink/50">Загрузка…</p>}

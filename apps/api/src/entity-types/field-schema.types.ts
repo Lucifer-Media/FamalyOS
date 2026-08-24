@@ -22,7 +22,7 @@ export interface EntityTypeSchema {
   entityType: string;
   labelSingular: string;
   labelPlural: string;
-  resource: 'DOCUMENTS' | 'MEDICAL';
+  resource: 'DOCUMENTS' | 'MEDICAL' | 'FINANCE';
   fields: FieldSchema[];
   /** Дочерние типы, создаваемые как отдельные связанные сущности (например, регистрации паспорта). */
   childTypes?: string[];

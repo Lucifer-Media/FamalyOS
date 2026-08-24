@@ -10,8 +10,16 @@ export class SearchController {
   constructor(private readonly service: SearchService) {}
 
   @Get()
-  search(@CurrentUser() userId: string, @FamilySpaceId() familySpaceId: string, @Query('q') q: string) {
+  search(
+    @CurrentUser() userId: string,
+    @FamilySpaceId() familySpaceId: string,
+    @Query('q') q: string,
+    @Query('types') types?: string,
+    @Query('limit') limit?: string,
+  ) {
     if (!q || q.trim().length === 0) return [];
-    return this.service.search(userId, familySpaceId, q.trim());
+    const entityTypes = types ? types.split(',').map((t) => t.trim()).filter(Boolean) : undefined;
+    const limitNum = limit ? parseInt(limit, 10) : 50;
+    return this.service.search(userId, familySpaceId, q.trim(), entityTypes, limitNum);
   }
 }

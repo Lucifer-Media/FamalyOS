@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { MembershipsService } from './memberships.service';
@@ -66,5 +66,26 @@ export class MembershipsController {
     @Body() dto: SetPermissionOverrideDto,
   ) {
     return this.service.setPermissionOverride(userId, familySpaceId, membershipId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('family-spaces/:id/members/:membershipId/permission-overrides')
+  getOverrides(
+    @CurrentUser() userId: string,
+    @Param('id') familySpaceId: string,
+    @Param('membershipId') membershipId: string,
+  ) {
+    return this.service.getPermissionOverrides(userId, familySpaceId, membershipId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('family-spaces/:id/members/:membershipId/permission-overrides/:overrideId')
+  deleteOverride(
+    @CurrentUser() userId: string,
+    @Param('id') familySpaceId: string,
+    @Param('membershipId') membershipId: string,
+    @Param('overrideId') overrideId: string,
+  ) {
+    return this.service.deletePermissionOverride(userId, familySpaceId, membershipId, overrideId);
   }
 }

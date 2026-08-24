@@ -108,6 +108,7 @@ model FamilySpace {
   permissionOverrides MembershipPermissionOverride[]
   documentIntakes DocumentIntake[]
   financialTransactionExternalIds FinancialTransactionExternalId[]
+  currencyRates CurrencyRate[]
 
   @@map("family_spaces")
 }
@@ -510,4 +511,23 @@ model AuditLog {
   @@index([familySpaceId, createdAt])
   @@index([actorUserId, createdAt])
   @@map("audit_logs")
+}
+
+// История курсов валют для мультивалютных операций и переводов.
+model CurrencyRate {
+  id            String   @id @default(uuid())
+  familySpaceId String
+  familySpace   FamilySpace @relation(fields: [familySpaceId], references: [id])
+  date          DateTime // Дата курса (исторический снимок)
+  fromCurrency  String   // Код валюты источника (ISO 4217: RUB, USD, EUR...)
+  toCurrency    String   // Код валюты назначения
+  rate          Decimal  @db.Decimal(18, 6) // Курс: 1 единица fromCurrency = rate toCurrency
+  source        String?  // Источник курса (CBR, ECB, manual, transfer_123...)
+  createdAt     DateTime @default(now())
+  createdBy     String?  // ID пользователя, создавшего запись
+
+  @@unique([date, fromCurrency, toCurrency]) // Один курс на дату/пару
+  @@index([familySpaceId, date])
+  @@index([fromCurrency, toCurrency, date])
+  @@map("currency_rates")
 }
