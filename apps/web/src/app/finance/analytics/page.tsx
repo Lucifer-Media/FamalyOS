@@ -5,6 +5,7 @@ import { AppShell } from '@/components/app-shell';
 import { useRequireAuth } from '@/lib/use-require-auth';
 import { apiFetch } from '@/lib/api';
 import { Card, Button } from '@/components/ui';
+import { FinanceSubNav } from '@/components/finance-subnav';
 
 interface CategoryAnalytics {
   category: string;
@@ -58,6 +59,10 @@ export default function AnalyticsPage() {
     <AppShell>
       <h1 className="font-display text-2xl font-semibold text-ink">Аналитика расходов</h1>
       <p className="mt-1 text-sm text-ink/60">По категориям, со сравнением с предыдущим таким же периодом.</p>
+
+      <div className="mt-4">
+        <FinanceSubNav active="/finance/analytics" />
+      </div>
 
       <Card className="mt-4">
         <div className="flex flex-wrap items-end gap-3">

@@ -138,7 +138,7 @@ export default function EntityLinkSelect({
         </div>
 
         {isOpen && query.length >= 2 && (
-          <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-card border border-line bg-paper shadow-md">
+          <div className="animate-in absolute z-50 mt-1 max-h-60 w-full origin-top overflow-auto rounded-card border border-line bg-paper shadow-md">
             {isLoading ? (
               <div className="flex items-center justify-center gap-2 p-3 text-sm text-ink/50">
                 <Loader2 className="h-4 w-4 animate-spin" /> Поиск…

@@ -4,13 +4,14 @@ import { ReactNode, useState, FormEvent } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import clsx from 'clsx';
-import { BookOpen, FolderClosed, Home, LogOut, Menu, Search, ShieldCheck, Users, X, FileStack, MapPin, HeartPulse, ScanLine, Wallet, Zap } from 'lucide-react';
+import { BookOpen, FolderClosed, Home, LogOut, Menu, Search, ShieldCheck, Users, X, FileStack, MapPin, HeartPulse, ScanLine, Wallet, Zap, Sparkles } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 
 const NAV_ITEMS = [
   { href: '/dashboard', label: 'Обзор', icon: Home },
   { href: '/documents', label: 'Документы', icon: FileStack },
   { href: '/document-intake', label: 'Загрузка документа', icon: ScanLine },
+  { href: '/assistant', label: 'Ассистент', icon: Sparkles },
   { href: '/finance', label: 'Финансы', icon: Wallet },
   { href: '/utilities', label: 'ЖКХ', icon: Zap },
   { href: '/locations', label: 'Локации', icon: MapPin },

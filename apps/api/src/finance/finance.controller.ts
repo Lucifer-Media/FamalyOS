@@ -5,6 +5,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { FamilySpaceId } from '../common/decorators/family-space.decorator';
 import { FinanceImportService } from './finance-import.service';
 import { FinanceAnalyticsService } from './finance-analytics.service';
+import { FinanceDashboardService } from './finance-dashboard.service';
 import { ConfirmImportDto } from './dto/confirm-import.dto';
 
 const MAX_STATEMENT_SIZE_BYTES = 50 * 1024 * 1024;
@@ -15,6 +16,7 @@ export class FinanceController {
   constructor(
     private readonly service: FinanceImportService,
     private readonly analytics: FinanceAnalyticsService,
+    private readonly dashboard: FinanceDashboardService,
   ) {}
 
   @Post('import/:accountEntityId/parse')
@@ -85,5 +87,19 @@ export class FinanceController {
     @Param('budgetId') budgetId: string,
   ) {
     return this.analytics.getBudgetStatus(userId, familySpaceId, budgetId);
+  }
+
+  @Get('budgets/:budgetId/periods')
+  getBudgetPeriods(
+    @CurrentUser() userId: string,
+    @FamilySpaceId() familySpaceId: string,
+    @Param('budgetId') budgetId: string,
+  ) {
+    return this.analytics.getBudgetPeriodBreakdown(userId, familySpaceId, budgetId);
+  }
+
+  @Get('dashboard')
+  getDashboard(@CurrentUser() userId: string, @FamilySpaceId() familySpaceId: string) {
+    return this.dashboard.getDashboard(userId, familySpaceId);
   }
 }

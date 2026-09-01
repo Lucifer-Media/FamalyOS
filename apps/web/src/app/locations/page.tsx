@@ -90,7 +90,7 @@ export default function LocationsPage() {
       {!schema && <p className="mt-4 text-sm text-ink/50">Загрузка…</p>}
 
       {creating === 'root' && schema && (
-        <Card className="mt-4">
+        <Card className="animate-in mt-4">
           <DynamicEntityForm schema={schema} values={values} onChange={(k, v) => setValues((s) => ({ ...s, [k]: v }))} />
           <div className="mt-3 flex gap-2">
             <Button onClick={() => onCreate(null)}>Сохранить</Button>

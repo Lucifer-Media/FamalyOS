@@ -3,6 +3,7 @@
 import { EntityTypeSchema, FieldSchema } from '@/lib/entity-type-schemas';
 import { Field, Input, Textarea } from '@/components/ui';
 import EntityLinkSelect from '@/components/ui/entity-link-select';
+import { enumLabel } from '@/lib/enum-labels';
 
 interface Props {
   schema: EntityTypeSchema;
@@ -24,7 +25,9 @@ interface Props {
 export function DynamicEntityForm({ schema, values, onChange, disabled, fieldConfidence }: Props) {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-      {schema.fields.map((field) => (
+      {schema.fields
+        .filter((field) => !field.hiddenFromGenericForm)
+        .map((field) => (
         <div key={field.key} className={field.type === 'text' ? 'sm:col-span-2' : ''}>
           <DynamicField
             field={field}
@@ -103,7 +106,7 @@ function DynamicField({
           <option value="">—</option>
           {(field.enumValues ?? []).map((v) => (
             <option key={v} value={v}>
-              {v}
+              {enumLabel(v)}
             </option>
           ))}
         </select>

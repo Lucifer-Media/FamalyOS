@@ -6,9 +6,10 @@ import { OcrProcessor } from './ocr.processor';
 import { OcrQueueModule } from './ocr-queue.module';
 import { FilesModule } from '../files/files.module';
 import { EntitiesModule } from '../entities/entities.module';
+import { AiAssistantModule } from '../ai-assistant/ai-assistant.module';
 
 @Module({
-  imports: [FilesModule, EntitiesModule, OcrQueueModule],
+  imports: [FilesModule, EntitiesModule, OcrQueueModule, AiAssistantModule],
   providers: [DocumentIntakeService, OcrService, OcrProcessor],
   controllers: [DocumentIntakeController],
 })

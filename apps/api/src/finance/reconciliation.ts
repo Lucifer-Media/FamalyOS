@@ -69,3 +69,28 @@ export function findReconciliationCandidates(
 
   return candidates.sort((a, b) => b.confidence - a.confidence);
 }
+
+/**
+ * Чистая функция поиска парной операции для перевода между своими счетами —
+ * вынесена отдельно от FinanceImportService, чтобы тестироваться без
+ * реальных Prisma-зависимостей (см. finance-import.service.ts).
+ */
+export function findTransferPairMatch(
+  excludeAccountId: string,
+  tx: { id: string; date: string; amount: number },
+  candidates: { id: string; attributes: unknown }[],
+): string | undefined {
+  const txDateMs = new Date(tx.date).getTime();
+  const match = candidates.find((c) => {
+    const a = c.attributes as Record<string, unknown>;
+    if (a.accountId === excludeAccountId) return false; // тот же счёт — не может быть парой перевода
+    if (a.relatedTransactionId) return false; // уже связана с другой операцией
+    const amount = Number(a.amount);
+    if (Math.abs(amount + tx.amount) > 0.01) return false; // суммы должны быть противоположны
+    const date = String(a.date ?? '');
+    if (!date) return false;
+    const daysDiff = Math.abs(new Date(date).getTime() - txDateMs) / 86400000;
+    return daysDiff <= 3;
+  });
+  return match?.id;
+}

@@ -4,20 +4,61 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '@/components/app-shell';
 import { useRequireAuth } from '@/lib/use-require-auth';
+import { useEntityTypeSchema } from '@/lib/use-entity-types';
+import { DynamicEntityForm } from '@/components/dynamic-entity-form';
+import { FinanceSubNav } from '@/components/finance-subnav';
+import { BankAvatar } from '@/components/bank-avatar';
 import { apiFetch, ApiError } from '@/lib/api';
 import { Button, Card, ErrorText, Badge } from '@/components/ui';
-import { Upload, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
+import { toast } from 'sonner';
+import { Upload, ArrowUpRight, ArrowDownLeft, Plus, Pencil, X, Save, Archive, ArchiveRestore, History, Globe } from 'lucide-react';
 
 interface AccountDetail {
   id: string;
   title: string;
-  attributes: { bankName?: string; currency?: string; accountType?: string };
+  status: string;
+  currentVersion: number;
+  attributes: {
+    bankId?: string;
+    bankName?: string;
+    brandColorOverride?: string;
+    currency?: string;
+    accountType?: string;
+    accountNumber?: string;
+    linkedCardNumber?: string;
+    currentBalance?: number;
+    interestRate?: number;
+    creditLimit?: number;
+    openDate?: string;
+    closeDate?: string;
+    notes?: string;
+  };
+}
+
+interface BankDetail {
+  id: string;
+  attributes: { name?: string; country?: string; website?: string; brandColor?: string; notes?: string };
+}
+
+interface VersionEntry {
+  versionNumber: number;
+  action: string;
+  changeSummary: string | null;
+  changedAt: string;
 }
 
 interface TransactionSummary {
   id: string;
   title: string;
-  attributes: { date: string; amount: number; currency: string; description: string; category?: string };
+  attributes: {
+    date: string;
+    amount: number;
+    currency: string;
+    description: string;
+    category?: string;
+    transactionType?: string;
+    scope?: string;
+  };
 }
 
 interface StagedTransaction {
@@ -32,11 +73,27 @@ interface StagedTransaction {
   isDuplicate: boolean;
 }
 
+// Частые категории — просто подсказки в datalist, пользователь может ввести свою.
+const COMMON_CATEGORIES = [
+  'Продукты', 'Транспорт', 'ЖКХ', 'Рестораны и кафе', 'Здоровье', 'Развлечения',
+  'Одежда', 'Путешествия', 'Связь', 'Подписки', 'Между своими счетами', 'Зарплата', 'Прочее',
+];
+
+interface TransactionFormState {
+  date: string;
+  amount: string;
+  category: string;
+  description: string;
+  scope: string;
+}
+
 export default function AccountDetailPage() {
   const { loading, isAuthenticated } = useRequireAuth();
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const { schema: accountSchema } = useEntityTypeSchema('bank_account');
   const [account, setAccount] = useState<AccountDetail | null>(null);
+  const [bank, setBank] = useState<BankDetail | null>(null);
   const [transactions, setTransactions] = useState<TransactionSummary[]>([]);
   const [staged, setStaged] = useState<StagedTransaction[] | null>(null);
   const [detectedFormat, setDetectedFormat] = useState('');
@@ -45,20 +102,83 @@ export default function AccountDetailPage() {
   const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Редактирование реквизитов счёта (пункт 2 запроса на доработку).
+  const [editingAccount, setEditingAccount] = useState(false);
+  const [accountValues, setAccountValues] = useState<Record<string, unknown>>({});
+  const [savingAccount, setSavingAccount] = useState(false);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [versions, setVersions] = useState<VersionEntry[]>([]);
+  const [showVersions, setShowVersions] = useState(false);
+
+  // Ручное добавление / редактирование одной операции — одна и та же форма для обоих случаев.
+  const [editingId, setEditingId] = useState<string | 'new' | null>(null);
+  const [form, setForm] = useState<TransactionFormState>({ date: '', amount: '', category: '', description: '', scope: 'FAMILY' });
+  const [saving, setSaving] = useState(false);
+
   async function load() {
     const [acc, txs] = await Promise.all([
       apiFetch<AccountDetail>(`/entities/${params.id}`),
       apiFetch<TransactionSummary[]>(`/entities?entityType=financial_transaction`),
     ]);
     setAccount(acc);
-    // Показываем только операции этого счёта (фильтрация по attributes.accountId делается на клиенте,
-    // т.к. общий список отдаётся по типу без фильтра по произвольному полю).
+    setAccountValues(acc.attributes ?? {});
     setTransactions((txs as any).filter((t: any) => t.attributes?.accountId === params.id));
+    if (acc.attributes.bankId) {
+      apiFetch<BankDetail>(`/entities/${acc.attributes.bankId}`)
+        .then(setBank)
+        .catch(() => setBank(null));
+    } else {
+      setBank(null);
+    }
   }
 
   useEffect(() => {
     load().catch((e) => setError(e.message));
   }, [params.id]);
+
+  async function onSaveAccount() {
+    setSavingAccount(true);
+    setError('');
+    try {
+      const updated = await apiFetch<AccountDetail>(`/entities/${params.id}`, {
+        method: 'PATCH',
+        body: { attributes: accountValues },
+      });
+      setAccount(updated);
+      setAccountValues(updated.attributes ?? {});
+      setEditingAccount(false);
+      toast.success('Реквизиты счёта сохранены');
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 400) {
+        setError(Array.isArray((e.body as any)?.errors) ? (e.body as any).errors.join('; ') : e.message);
+      } else {
+        setError(e instanceof ApiError ? e.message : 'Не удалось сохранить реквизиты');
+      }
+    } finally {
+      setSavingAccount(false);
+    }
+  }
+
+  async function onToggleArchive() {
+    if (!account) return;
+    setArchiveBusy(true);
+    try {
+      const nextAction = account.status === 'ARCHIVED' ? 'unarchive' : 'archive';
+      const updated = await apiFetch<AccountDetail>(`/entities/${params.id}/${nextAction}`, { method: 'PATCH' });
+      setAccount(updated);
+      toast.success(nextAction === 'archive' ? 'Счёт архивирован' : 'Счёт восстановлен из архива');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Не удалось изменить статус счёта');
+    } finally {
+      setArchiveBusy(false);
+    }
+  }
+
+  async function loadVersions() {
+    const v = await apiFetch<VersionEntry[]>(`/entities/${params.id}/versions`);
+    setVersions(v);
+    setShowVersions((s) => !s);
+  }
 
   async function onUploadStatement(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -97,11 +217,71 @@ export default function AccountDetailPage() {
       });
       setStaged(null);
       await load();
-      alert(`Импортировано операций: ${result.created}. Пропущено дублей: ${result.skippedDuplicates}.`);
+      toast.success(`Импортировано операций: ${result.created}`, {
+        description: result.skippedDuplicates > 0 ? `Пропущено дублей: ${result.skippedDuplicates}` : undefined,
+      });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Не удалось подтвердить импорт');
     } finally {
       setConfirming(false);
+    }
+  }
+
+  function openNewTransaction() {
+    setForm({ date: new Date().toISOString().slice(0, 10), amount: '', category: '', description: '', scope: 'FAMILY' });
+    setEditingId('new');
+  }
+
+  function openEditTransaction(t: TransactionSummary) {
+    setForm({
+      date: t.attributes.date,
+      amount: String(t.attributes.amount),
+      category: t.attributes.category ?? '',
+      description: t.attributes.description ?? '',
+      scope: t.attributes.scope ?? 'FAMILY',
+    });
+    setEditingId(t.id);
+  }
+
+  async function onSaveTransaction() {
+    if (!account) return;
+    setSaving(true);
+    setError('');
+    try {
+      const amount = Number(form.amount);
+      if (!form.date || Number.isNaN(amount)) {
+        setError('Укажите дату и корректную сумму (отрицательная — расход, положительная — доход)');
+        setSaving(false);
+        return;
+      }
+      const attributes = {
+        date: form.date,
+        amount,
+        currency: account.attributes.currency ?? 'RUB',
+        accountId: params.id,
+        description: form.description || (amount < 0 ? 'Расход' : 'Доход'),
+        category: form.category || undefined,
+        scope: form.scope || undefined,
+        transactionType: amount < 0 ? 'EXPENSE' : 'INCOME',
+        source: 'MANUAL',
+      };
+      if (editingId === 'new') {
+        await apiFetch('/entities', {
+          method: 'POST',
+          body: { entityType: 'financial_transaction', title: `${form.date}: ${attributes.description}`, attributes },
+        });
+      } else if (editingId) {
+        await apiFetch(`/entities/${editingId}`, {
+          method: 'PATCH',
+          body: { attributes },
+        });
+      }
+      setEditingId(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Не удалось сохранить операцию');
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -116,14 +296,43 @@ export default function AccountDetailPage() {
         ← К списку счетов
       </button>
 
-      {!account && !error && <p className="text-sm text-ink/50">Загрузка…</p>}
+      <FinanceSubNav active="/finance" />
+
+      {!account && !error && <p className="mt-4 text-sm text-ink/50">Загрузка…</p>}
       <ErrorText>{error}</ErrorText>
 
       {account && (
         <>
-          <div className="flex items-center justify-between">
-            <h1 className="font-display text-xl font-semibold text-ink">{account.title}</h1>
-            <div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-3">
+              <BankAvatar
+                bankName={bank?.attributes.name ?? account.attributes.bankName}
+                brandColor={account.attributes.brandColorOverride ?? bank?.attributes.brandColor}
+                size={44}
+              />
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="font-display text-xl font-semibold text-ink">{account.title}</h1>
+                  {account.status === 'ARCHIVED' && <Badge tone="gold">В архиве</Badge>}
+                </div>
+                {typeof account.attributes.currentBalance === 'number' && (
+                  <p className="text-sm text-ink/60">
+                    {account.attributes.currentBalance.toLocaleString('ru-RU')} {account.attributes.currency}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={loadVersions}>
+                <History size={16} /> Версии (v{account.currentVersion})
+              </Button>
+              <Button variant="secondary" onClick={onToggleArchive} disabled={archiveBusy}>
+                {account.status === 'ARCHIVED' ? <ArchiveRestore size={16} /> : <Archive size={16} />}
+                {account.status === 'ARCHIVED' ? 'Восстановить' : 'Архивировать'}
+              </Button>
+              <Button variant="secondary" onClick={openNewTransaction}>
+                <Plus size={16} /> Добавить операцию
+              </Button>
               <input ref={fileInputRef} type="file" accept=".ofx,.csv,.xlsx,.xls" className="hidden" onChange={onUploadStatement} />
               <Button onClick={() => fileInputRef.current?.click()} disabled={uploading}>
                 <Upload size={16} /> {uploading ? 'Разбираем…' : 'Импортировать выписку'}
@@ -131,8 +340,150 @@ export default function AccountDetailPage() {
             </div>
           </div>
 
-          {staged && (
+          <Card className="mt-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-display text-lg font-semibold">Реквизиты и информация о счёте</h2>
+              {!editingAccount ? (
+                <Button variant="secondary" onClick={() => setEditingAccount(true)}>
+                  <Pencil size={16} /> Редактировать
+                </Button>
+              ) : (
+                <div className="flex gap-2">
+                  <Button onClick={onSaveAccount} disabled={savingAccount}>
+                    <Save size={16} /> {savingAccount ? 'Сохраняем…' : 'Сохранить'}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setAccountValues(account.attributes);
+                      setEditingAccount(false);
+                    }}
+                  >
+                    <X size={16} /> Отмена
+                  </Button>
+                </div>
+              )}
+            </div>
+            {accountSchema && (
+              <div className="mt-3">
+                <DynamicEntityForm
+                  schema={accountSchema}
+                  values={accountValues}
+                  onChange={(k, v) => setAccountValues((s) => ({ ...s, [k]: v }))}
+                  disabled={!editingAccount}
+                />
+              </div>
+            )}
+            {bank && (
+              <div className="mt-4 flex items-center gap-2 border-t border-line pt-3 text-sm text-ink/60">
+                <BankAvatar bankName={bank.attributes.name} brandColor={bank.attributes.brandColor} size={24} />
+                <span>{bank.attributes.name}</span>
+                {bank.attributes.country && <span>· {bank.attributes.country}</span>}
+                {bank.attributes.website && (
+                  <a
+                    href={bank.attributes.website.startsWith('http') ? bank.attributes.website : `https://${bank.attributes.website}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 text-moss-600 hover:underline"
+                  >
+                    <Globe size={14} /> сайт банка
+                  </a>
+                )}
+              </div>
+            )}
+          </Card>
+
+          {showVersions && (
             <Card className="mt-4">
+              <h3 className="font-display text-lg font-semibold">История изменений счёта</h3>
+              <ul className="mt-2 divide-y divide-line">
+                {versions.map((v) => (
+                  <li key={v.versionNumber} className="flex items-center justify-between py-2 text-sm">
+                    <span>
+                      <span className="font-medium">v{v.versionNumber}</span> — {v.action} ·{' '}
+                      <span className="text-ink/50">{new Date(v.changedAt).toLocaleString('ru-RU')}</span>
+                    </span>
+                  </li>
+                ))}
+                {versions.length === 0 && <p className="py-2 text-sm text-ink/50">История пуста.</p>}
+              </ul>
+            </Card>
+          )}
+
+          {editingId && (
+            <Card className="animate-in mt-4">
+              <h2 className="font-display text-lg font-semibold">
+                {editingId === 'new' ? 'Новая операция' : 'Редактирование операции'}
+              </h2>
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-ink/50">Дата</label>
+                  <input
+                    type="date"
+                    value={form.date}
+                    onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+                    className="w-full rounded-card border border-line bg-paper px-3 py-1.5 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-ink/50">Сумма (отрицательная — расход)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={form.amount}
+                    onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
+                    className="w-full rounded-card border border-line bg-paper px-3 py-1.5 text-sm"
+                    placeholder="-1500 или 50000"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-ink/50">Категория</label>
+                  <input
+                    list="category-suggestions"
+                    value={form.category}
+                    onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+                    className="w-full rounded-card border border-line bg-paper px-3 py-1.5 text-sm"
+                    placeholder="Продукты, Транспорт…"
+                  />
+                  <datalist id="category-suggestions">
+                    {COMMON_CATEGORIES.map((c) => (
+                      <option key={c} value={c} />
+                    ))}
+                  </datalist>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-ink/50">Описание</label>
+                  <input
+                    value={form.description}
+                    onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                    className="w-full rounded-card border border-line bg-paper px-3 py-1.5 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-ink/50">Тип расхода</label>
+                  <select
+                    value={form.scope}
+                    onChange={(e) => setForm((f) => ({ ...f, scope: e.target.value }))}
+                    className="w-full rounded-card border border-line bg-paper px-3 py-1.5 text-sm"
+                  >
+                    <option value="FAMILY">Семейный</option>
+                    <option value="PERSONAL">Личный</option>
+                  </select>
+                </div>
+              </div>
+              <div className="mt-3 flex gap-2">
+                <Button onClick={onSaveTransaction} disabled={saving}>
+                  {saving ? 'Сохраняем…' : 'Сохранить'}
+                </Button>
+                <Button variant="secondary" onClick={() => setEditingId(null)}>
+                  Отмена
+                </Button>
+              </div>
+            </Card>
+          )}
+
+          {staged && (
+            <Card className="animate-in mt-4">
               <div className="flex items-center justify-between">
                 <h2 className="font-display text-lg font-semibold">Предпросмотр импорта</h2>
                 <Badge tone="moss">{detectedFormat}</Badge>
@@ -175,7 +526,7 @@ export default function AccountDetailPage() {
               {transactions
                 .sort((a, b) => (a.attributes.date < b.attributes.date ? 1 : -1))
                 .map((t) => (
-                  <div key={t.id} className="flex items-center justify-between py-2 text-sm">
+                  <div key={t.id} className="group flex items-center justify-between py-2 text-sm">
                     <div className="flex items-center gap-2">
                       {t.attributes.amount < 0 ? (
                         <ArrowUpRight size={14} className="text-clay" />
@@ -186,13 +537,23 @@ export default function AccountDetailPage() {
                         <p className="text-ink">{t.attributes.description}</p>
                         <p className="text-xs text-ink/40">
                           {t.attributes.date} {t.attributes.category ? `· ${t.attributes.category}` : ''}
+                          {t.attributes.scope === 'PERSONAL' && ' · личный'}
                         </p>
                       </div>
                     </div>
-                    <p className={t.attributes.amount < 0 ? 'text-clay' : 'text-moss-600'}>
-                      {t.attributes.amount > 0 ? '+' : ''}
-                      {t.attributes.amount} {t.attributes.currency}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className={t.attributes.amount < 0 ? 'text-clay' : 'text-moss-600'}>
+                        {t.attributes.amount > 0 ? '+' : ''}
+                        {t.attributes.amount} {t.attributes.currency}
+                      </p>
+                      <button
+                        onClick={() => openEditTransaction(t)}
+                        className="opacity-0 transition-opacity hover:text-clay group-hover:opacity-100"
+                        title="Редактировать"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               {transactions.length === 0 && <p className="py-2 text-sm text-ink/50">Операций пока нет.</p>}

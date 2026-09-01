@@ -441,10 +441,43 @@ export function extractSuggestedAttributes(
   }
 
   if (entityType === 'medical_visit' || entityType === 'medical_conclusion' || entityType === 'prescription') {
-    setField('date', dates[0], 0.5);
-    if (entityType === 'medical_conclusion') {
-      const diagnosis = extractLabeledField(text, ['диагноз']);
+    // РЕГРЕССИЯ: раньше брали ПЕРВУЮ дату в тексте документа — а первой
+    // датой часто оказывается дата рождения пациента ("Пациент: Иванов И.И.,
+    // 10.07.2001 г.р."), которая обычно упоминается раньше даты приёма.
+    // Сначала ищем явно подписанную дату посещения/приёма, и только если
+    // её нет — берём первую дату как раньше (лучше, чем ничего).
+    const visitDateLabeled = extractLabeledField(text, [
+      'дата посещения', 'дата приёма', 'дата приема', 'дата выдачи', 'дата обращения',
+    ]);
+    const visitDateMatch = visitDateLabeled?.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+    if (visitDateMatch) {
+      setField('date', `${visitDateMatch[3]}-${visitDateMatch[2]}-${visitDateMatch[1]}`, 0.7);
+    } else if (dates[0]) {
+      setField('date', dates[0], 0.4); // ниже уверенность — это может оказаться не та дата
+    }
+
+    // "Действительно до" / рецепт: срок повторного приёма или срок действия
+    const validUntilLabeled = extractLabeledField(text, [
+      'явка \\(повторный приём\\)', 'явка \\(повторный прием\\)', 'повторный приём', 'повторный прием',
+      'следующее посещение', 'действительно до', 'действует до', 'срок действия',
+    ]);
+    const validUntilMatch = validUntilLabeled?.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+    if (validUntilMatch) {
+      setField('validUntil', `${validUntilMatch[3]}-${validUntilMatch[2]}-${validUntilMatch[1]}`, 0.6);
+    }
+
+    if (entityType === 'medical_conclusion' || entityType === 'medical_visit') {
+      const diagnosis = extractLabeledField(text, ['предварительный диагноз', 'диагноз']);
       if (diagnosis) setField('diagnosis', diagnosis, 0.5);
+
+      // "Рекомендации" — обычно не однострочное поле "метка: значение", а
+      // целый раздел документа. Берём текст от заголовка "Медикаментозная
+      // терапия" (наиболее конкретная, действенная часть рекомендаций) до
+      // конца или до следующего явного раздела, ограничивая длину.
+      const therapyMatch = text.match(/медикаментозная терапия[:\s]*([\s\S]{0,600}?)(?:назначенные услуги|лечащий врач|$)/i);
+      if (therapyMatch) {
+        setField('recommendations', therapyMatch[1].trim().slice(0, 500), 0.4);
+      }
     }
   }
 
@@ -523,10 +556,22 @@ export function extractMedicalPartyGuesses(entityType: string, text: string): Me
   if (!['medical_visit', 'medical_conclusion', 'prescription', 'vaccination'].includes(entityType)) {
     return {};
   }
+  let organizationName = extractLabeledField(text, ['учреждение', 'организация', 'мед\\.? организация']);
+  if (!organizationName) {
+    // Название клиники часто оформлено как заголовок/логотип в начале
+    // документа ("СМ-Клиника", "Инвитро"...), а не как подписанное поле
+    // "Организация: ..." — ищем среди первых строк документа что-то похожее
+    // на название медучреждения.
+    const firstLines = text.split('\n').slice(0, 8);
+    const headerLine = firstLines.find((line) =>
+      /клиника|поликлиника|больниц|медицинск.{0,15}(центр|холдинг)|диагностическ.{0,15}центр/i.test(line),
+    );
+    if (headerLine && headerLine.trim().length < 100) organizationName = headerLine.trim();
+  }
   return {
     patientFullName: extractLabeledField(text, ['пациент', 'больной', 'ф\\.?и\\.?о\\.? пациента']),
-    doctorFullName: extractLabeledField(text, ['врач', 'лечащий врач', 'специалист']),
-    organizationName: extractLabeledField(text, ['учреждение', 'организация', 'клиника', 'мед\\.? организация']),
+    doctorFullName: extractLabeledField(text, ['лечащий врач', 'врач', 'специалист']),
+    organizationName,
   };
 }
 
@@ -572,4 +617,59 @@ export function findBestNameMatch(
       e.title.trim().toLowerCase().includes(normalized) || normalized.includes(e.title.trim().toLowerCase()),
   );
   return partial?.id;
+}
+
+export interface MeterReadingCandidate {
+  resourceType: 'ELECTRICITY' | 'COLD_WATER' | 'HOT_WATER' | 'GAS' | 'HEATING' | 'DRAINAGE' | 'OTHER';
+  meterNumber: string;
+  value: number;
+  rawLine: string;
+}
+
+const RESOURCE_LABEL_TO_TYPE: [RegExp, MeterReadingCandidate['resourceType']][] = [
+  [/электро/i, 'ELECTRICITY'],
+  [/горяч|гвс/i, 'HOT_WATER'],
+  [/холодн|хвс/i, 'COLD_WATER'],
+  [/отоплени/i, 'HEATING'],
+  [/газ/i, 'GAS'],
+  [/водоотведени/i, 'DRAINAGE'],
+];
+
+/**
+ * Извлекает кандидатов показаний ТОЛЬКО из надёжного построчного формата
+ * ("<услуга> <номер счётчика> <показание>", как в квитанциях УК) — тот
+ * самый текст, что уже попадает в поле breakdown. Формат с табличным дампом
+ * (Мосводоканал и похожие, где PDF отдаёт текст по столбцам, а не по
+ * строкам) сознательно НЕ пытаемся разобрать автоматически — неверное
+ * сопоставление номера счётчика с чужим показанием хуже, чем отсутствие
+ * автоматизации вообще. Для таких документов пользователь вводит показания
+ * вручную, глядя на этот же текст.
+ */
+export function extractMeterReadingCandidates(breakdownText: string): MeterReadingCandidate[] {
+  const candidates: MeterReadingCandidate[] = [];
+  const lines = breakdownText.split('\n');
+
+  for (const line of lines) {
+    // "ГОРЯЧЕЕ В/С 1345356 34,880000" или "Электроэнергия ОДН кВт 0,00 15,675050"
+    // — ищем: текстовая метка ресурса, номер счётчика (6-8 цифр), затем ПОСЛЕДНЕЕ
+    // число в строке — это показание (даже если между ними встретился ещё один
+    // маленький промежуточный показатель вроде "0,00", он не должен "откусывать"
+    // от искомого значения — поэтому ищем именно последнее число в строке).
+    const numbers = [...line.matchAll(/\d+[.,]\d{1,6}|\d{6,8}/g)];
+    if (numbers.length < 2) continue;
+
+    const meterNumberMatch = numbers.find((n) => /^\d{6,8}$/.test(n[0]));
+    const lastNumber = numbers[numbers.length - 1];
+    if (!meterNumberMatch || lastNumber === meterNumberMatch) continue;
+
+    const label = line.slice(0, meterNumberMatch.index).trim();
+    const resourceEntry = RESOURCE_LABEL_TO_TYPE.find(([re]) => re.test(label));
+    if (!resourceEntry) continue;
+
+    const value = Number(lastNumber[0].replace(',', '.'));
+    if (!Number.isFinite(value)) continue;
+
+    candidates.push({ resourceType: resourceEntry[1], meterNumber: meterNumberMatch[0], value, rawLine: line.trim() });
+  }
+  return candidates;
 }

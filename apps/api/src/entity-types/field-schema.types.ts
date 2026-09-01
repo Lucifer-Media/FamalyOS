@@ -16,6 +16,10 @@ export interface FieldSchema {
   enumValues?: string[];
   /** Для type='link' — на какой entityType обычно ссылается (не enforced строго, справочно). */
   linkTarget?: string;
+  /** Поле управляется отдельным специализированным UI-компонентом (например,
+   * структурированные статьи расхода ЖКХ) — общая форма его не показывает,
+   * чтобы не путать пользователя сырым JSON. */
+  hiddenFromGenericForm?: boolean;
 }
 
 export interface EntityTypeSchema {

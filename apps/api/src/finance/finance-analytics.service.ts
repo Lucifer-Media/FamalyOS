@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { PermissionsService } from '../common/permissions.service';
+import { computePeriodBreakdown, PeriodAllocation, BudgetPeriodType } from './budget-periods';
 
 export interface CategoryAnalytics {
   category: string;
@@ -86,6 +87,69 @@ export class FinanceAnalyticsService {
     });
   }
 
+  /**
+   * Общая логика сопоставления операций с бюджетом — вынесена из
+   * getBudgetStatus, чтобы использоваться и разбивкой по периодам
+   * (getBudgetPeriodBreakdown), не дублируя правила сопоставления.
+   */
+  private async matchBudgetTransactions(
+    familySpaceId: string,
+    budget: { id: string; attributes: unknown },
+  ): Promise<{ id: string; date: string; description: string; amount: number; category: string }[]> {
+    const budgetAttrs = budget.attributes as Record<string, unknown>;
+    const budgetCategoryId = budgetAttrs.categoryId as string | undefined;
+    const budgetCategories = String(budgetAttrs.categories ?? '')
+      .split(',')
+      .map((c) => c.trim().toLowerCase())
+      .filter(Boolean);
+    const startDate = String(budgetAttrs.startDate ?? '');
+    const endDate = budgetAttrs.endDate ? String(budgetAttrs.endDate) : '9999-12-31';
+
+    const transactions = await this.prisma.entity.findMany({
+      where: { familySpaceId, entityType: 'financial_transaction', status: 'ACTIVE' },
+      select: { id: true, attributes: true },
+    });
+
+    // Операция считается "по этому бюджету", если ЛИБО явно привязана
+    // (attrs.budgetId === budgetId — приоритетный, точный способ, если
+    // пользователь выставил его вручную), ЛИБО подходит по категории
+    // (сперва пробуем categoryId из справочника, если у бюджета он указан;
+    // иначе — старый текстовый способ через свободный список categories,
+    // для операций, у которых ещё нет ссылки на справочник) и укладывается
+    // в период бюджета.
+    const matchedTransactions: { id: string; date: string; description: string; amount: number; category: string }[] = [];
+    for (const tx of transactions) {
+      const attrs = tx.attributes as Record<string, unknown>;
+      const amount = Number(attrs.amount) || 0;
+      if (amount >= 0) continue; // расход — только отрицательные суммы
+
+      const explicitlyLinked = attrs.budgetId === budget.id;
+      if (!explicitlyLinked) {
+        const date = String(attrs.date ?? '');
+        const dateMatches = date && date >= startDate && date <= endDate;
+
+        let categoryMatches: boolean;
+        if (budgetCategoryId) {
+          categoryMatches = attrs.categoryId === budgetCategoryId;
+        } else {
+          const category = String(attrs.category ?? '').toLowerCase();
+          categoryMatches = budgetCategories.length === 0 || budgetCategories.includes(category);
+        }
+        if (!categoryMatches || !dateMatches) continue;
+      }
+
+      matchedTransactions.push({
+        id: tx.id,
+        date: String(attrs.date ?? ''),
+        description: String(attrs.description ?? ''),
+        amount,
+        category: String(attrs.category ?? 'Без категории'),
+      });
+    }
+    matchedTransactions.sort((a, b) => (a.date < b.date ? 1 : -1));
+    return matchedTransactions;
+  }
+
   /** Статус конкретного бюджета: выделено / потрачено / осталось. */
   async getBudgetStatus(userId: string, familySpaceId: string, budgetId: string) {
     const membership = await this.permissions.getMembership(userId, familySpaceId);
@@ -96,19 +160,8 @@ export class FinanceAnalyticsService {
       return null;
     }
     const budgetAttrs = budget.attributes as Record<string, unknown>;
-
-    const transactions = await this.prisma.entity.findMany({
-      where: { familySpaceId, entityType: 'financial_transaction', status: 'ACTIVE' },
-      select: { attributes: true },
-    });
-
-    let spent = 0;
-    for (const tx of transactions) {
-      const attrs = tx.attributes as Record<string, unknown>;
-      if (attrs.budgetId !== budgetId) continue;
-      const amount = Number(attrs.amount) || 0;
-      if (amount < 0) spent += Math.abs(amount);
-    }
+    const matchedTransactions = await this.matchBudgetTransactions(familySpaceId, budget);
+    const spent = matchedTransactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
 
     const planned = Number(budgetAttrs.plannedExpense) || 0;
     return {
@@ -118,6 +171,34 @@ export class FinanceAnalyticsService {
       spent: Math.round(spent * 100) / 100,
       remaining: Math.round((planned - spent) * 100) / 100,
       percentUsed: planned > 0 ? Math.round((spent / planned) * 1000) / 10 : null,
+      matchedTransactions,
     };
+  }
+
+  /**
+   * Разбивка бюджета по периодам (год/месяц/неделя) — пункт 5 запроса на
+   * доработку: "возможность расписывать бюджеты по годам, месяцам,
+   * неделям". Данные о распределении (`periodAllocations`) хранятся в
+   * attributes бюджета и редактируются на фронтенде; здесь только считаем
+   * факт по каждому периоду поверх той же логики сопоставления операций.
+   */
+  async getBudgetPeriodBreakdown(userId: string, familySpaceId: string, budgetId: string) {
+    const membership = await this.permissions.getMembership(userId, familySpaceId);
+    await this.permissions.assertCan(membership, 'FINANCE', 'VIEW');
+
+    const budget = await this.prisma.entity.findUnique({ where: { id: budgetId } });
+    if (!budget || budget.familySpaceId !== familySpaceId || budget.entityType !== 'budget') {
+      return null;
+    }
+    const budgetAttrs = budget.attributes as Record<string, unknown>;
+    const periodType = (budgetAttrs.periodBreakdownType as BudgetPeriodType) || 'MONTHLY';
+    const allocations = Array.isArray(budgetAttrs.periodAllocations)
+      ? (budgetAttrs.periodAllocations as PeriodAllocation[])
+      : [];
+
+    const matchedTransactions = await this.matchBudgetTransactions(familySpaceId, budget);
+    const periods = computePeriodBreakdown(allocations, periodType, matchedTransactions);
+
+    return { budgetId, periodType, periods };
   }
 }

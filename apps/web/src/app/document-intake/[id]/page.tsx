@@ -9,7 +9,9 @@ import { useEntityTypeList, useEntityTypeSchema } from '@/lib/use-entity-types';
 import { DynamicEntityForm } from '@/components/dynamic-entity-form';
 import { apiFetch, ApiError } from '@/lib/api';
 import { Button, Card, ErrorText, Badge } from '@/components/ui';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { AlertTriangle, Check, X, RefreshCw, Copy, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface FieldConflict {
   field: string;
@@ -103,10 +105,16 @@ export default function DocumentIntakeDetailPage() {
     setBusy(true);
     setError('');
     try {
-      const entity = await apiFetch<{ id: string }>(`/document-intake/${params.id}/confirm`, {
+      const entity = await apiFetch<{ id: string; possibleDuplicateOfEntityId?: string }>(`/document-intake/${params.id}/confirm`, {
         method: 'POST',
         body: { entityType, title, attributes: resolvedValues(), parentEntityId },
       });
+      if (entity.possibleDuplicateOfEntityId) {
+        toast.warning('Похоже, такая квитанция уже есть в системе', {
+          description: 'Совпадает период и сумма. Новая запись создана — если это дубль, откройте старую и заархивируйте одну из них вручную.',
+          duration: 10000,
+        });
+      }
       router.push(entityType === 'passport_rf' ? `/documents/passport-rf/${entity.id}` : `/documents/${entityType}/${entity.id}`);
     } catch (e) {
       if (e instanceof ApiError && e.status === 400) {
@@ -277,19 +285,15 @@ export default function DocumentIntakeDetailPage() {
               перед сохранением. Если тип определить не удалось — выберите «Документ (тип не определён)»
               и сохраните с заметкой, разобраться можно позже.
             </p>
-            <select
-              value={entityType}
-              onChange={(e) => setEntityType(e.target.value)}
-              disabled={Boolean(data.intake.targetEntityId)}
-              className="mt-3 w-full rounded-card border border-line bg-white px-3 py-2 text-sm disabled:bg-paper-dim"
-            >
-              <option value="">— выберите тип —</option>
-              {schemas.map((s) => (
-                <option key={s.entityType} value={s.entityType}>
-                  {s.labelSingular}
-                </option>
-              ))}
-            </select>
+            <div className="mt-3">
+              <SearchableSelect
+                value={entityType}
+                onChange={setEntityType}
+                disabled={Boolean(data.intake.targetEntityId)}
+                placeholder="— выберите тип —"
+                options={schemas.map((s) => ({ value: s.entityType, label: s.labelSingular }))}
+              />
+            </div>
           </Card>
 
           {schema && (

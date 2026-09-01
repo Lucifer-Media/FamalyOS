@@ -1,4 +1,4 @@
-import { classifyDocumentText, extractSuggestedAttributes, applyOcrQualityToClassification, tokenReadabilityRatio } from '../document-classifier';
+import { classifyDocumentText, extractSuggestedAttributes, applyOcrQualityToClassification, tokenReadabilityRatio, extractMeterReadingCandidates, extractMedicalPartyGuesses } from '../document-classifier';
 
 describe('Эвристический классификатор документов (Итерация 2)', () => {
   it('распознаёт паспорт РФ по сильным ключевым словам с высокой уверенностью', () => {
@@ -184,5 +184,78 @@ describe('Извлечение расшифровки показаний счё�
   it('для документа без строк показаний breakdown не заполняется', () => {
     const { attributes } = extractSuggestedAttributes('utility_bill', 'Итого к оплате, руб. 100,00');
     expect(attributes.breakdown).toBeUndefined();
+  });
+});
+
+describe('extractMeterReadingCandidates — реальный формат квитанции УК', () => {
+  it('РЕГРЕССИЯ: корректно извлекает полное значение показания, не откусывая первую цифру', () => {
+    const candidates = extractMeterReadingCandidates('ГОРЯЧЕЕ В/С 1345356 34,880000');
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({ resourceType: 'HOT_WATER', meterNumber: '1345356', value: 34.88 });
+  });
+
+  it('извлекает несколько показаний из реального текста расшифровки квитанции', () => {
+    const breakdown = [
+      'ГОРЯЧЕЕ В/С 1345356 34,880000',
+      'ГОРЯЧЕЕ В/С 1345360 96,410000',
+    ].join('\n');
+    const candidates = extractMeterReadingCandidates(breakdown);
+    expect(candidates).toHaveLength(2);
+  });
+
+  it('строку без номера конкретного счётчика (например, общедомовые нужды) не считает показанием — не выдумывает привязку', () => {
+    const candidates = extractMeterReadingCandidates('Электроэнергия ОДН кВт 0,00 15,675050');
+    expect(candidates).toEqual([]);
+  });
+
+  it('строки без номера счётчика или без распознанного ресурса не попадают в кандидаты', () => {
+    const candidates = extractMeterReadingCandidates('Итого начислено, руб. 4 336,95\nПросто текст без чисел');
+    expect(candidates).toEqual([]);
+  });
+});
+
+describe('Медицинское заключение — реальный документ СМ-Клиника', () => {
+  const realText = `СМ-Клиника
+многопрофильный медицинский холдинг
+ООО "Дэрайс"
+Телефон +7 (495) 777-48-49
+РЕКОМЕНДАЦИИ ПО ЛЕЧЕНИЮ
+Пациент: Тихомиров Максим Сергеевич, 10.07.2001 г.р.
+Рекомендации
+Предварительный диагноз: Острый бронхит, затяжное течение. ДН 0 ст. St O2 - 97%.
+Режим: амбулаторный.
+Медикаментозная терапия:
+Продолжить лечение:
+- При насморке: промывать нос соленой водой
+ЯВКА (повторный прием): 14.04.2026 после дообследования
+Лечащий врач: Полонская Анна Валерьевна
+Дата посещения: 28.03.2026
+Назначенные услуги`;
+
+  it('РЕГРЕССИЯ: берёт дату ПОСЕЩЕНИЯ, а не первую дату в тексте (которой оказалась дата рождения пациента)', () => {
+    const { attributes } = extractSuggestedAttributes('medical_conclusion', realText);
+    expect(attributes.date).toBe('2026-03-28'); // не '2001-07-10' (дата рождения)!
+  });
+
+  it('извлекает срок повторной явки как validUntil', () => {
+    const { attributes } = extractSuggestedAttributes('medical_conclusion', realText);
+    expect(attributes.validUntil).toBe('2026-04-14');
+  });
+
+  it('РЕГРЕССИЯ: находит название клиники в заголовке документа, а не только в подписанном поле', () => {
+    const guesses = extractMedicalPartyGuesses('medical_conclusion', realText);
+    expect(guesses.organizationName).toBe('СМ-Клиника');
+  });
+
+  it('извлекает врача и диагноз', () => {
+    const guesses = extractMedicalPartyGuesses('medical_conclusion', realText);
+    expect(guesses.doctorFullName).toBe('Полонская Анна Валерьевна');
+    const { attributes } = extractSuggestedAttributes('medical_conclusion', realText);
+    expect(String(attributes.diagnosis)).toContain('Острый бронхит');
+  });
+
+  it('извлекает рекомендации как раздел текста, а не пустое поле', () => {
+    const { attributes } = extractSuggestedAttributes('medical_conclusion', realText);
+    expect(String(attributes.recommendations)).toContain('промывать нос');
   });
 });

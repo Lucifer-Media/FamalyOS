@@ -7,6 +7,7 @@ export interface FieldSchema {
   required?: boolean;
   enumValues?: string[];
   linkTarget?: string;
+  hiddenFromGenericForm?: boolean;
 }
 
 export interface EntityTypeSchema {
@@ -62,7 +63,7 @@ export const DOCUMENT_TYPE_GROUPS: { title: string; types: string[] }[] = [
   },
   {
     title: 'Финансы',
-    types: ['bank_account', 'financial_transaction', 'budget'],
+    types: ['bank', 'bank_account', 'financial_transaction', 'budget', 'financial_category', 'financial_goal', 'financial_need'],
   },
   {
     title: 'ЖКХ',

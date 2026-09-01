@@ -319,6 +319,7 @@ export class DocumentIntakeService {
     }
 
     let entity: { id: string; entityType: string };
+    let possibleDuplicateOfEntityId: string | undefined;
 
     if (intake.targetEntityId) {
       entity = await this.entities.update(userId, familySpaceId, intake.targetEntityId, {
@@ -330,6 +331,32 @@ export class DocumentIntakeService {
         data: { entityId: entity.id, fileId: intake.fileId, relationRole: 'scan' },
       });
     } else {
+      // Проверка на дубликат квитанции ЖКХ — реальный случай: одна и та же
+      // квитанция может быть случайно загружена дважды. Нет естественного
+      // externalId (как для банковских операций), поэтому сравниваем по
+      // совпадению поставщика+периода+суммы. НЕ блокирует создание —
+      // только предупреждает (возможна легитимная повторная загрузка,
+      // например скорректированная квитанция), пользователь решает сам.
+      if (dto.entityType === 'utility_bill') {
+        const attrs = dto.attributes as Record<string, unknown>;
+        if (attrs.period && attrs.totalAmount != null) {
+          const existing = await this.prisma.entity.findFirst({
+            where: {
+              familySpaceId,
+              entityType: 'utility_bill',
+              status: 'ACTIVE',
+              attributes: { path: ['period'], equals: attrs.period as any },
+            },
+          });
+          if (
+            existing &&
+            Math.abs(Number((existing.attributes as Record<string, unknown>).totalAmount) - Number(attrs.totalAmount)) < 0.01
+          ) {
+            possibleDuplicateOfEntityId = existing.id;
+          }
+        }
+      }
+
       entity = await this.entities.create(userId, familySpaceId, {
         entityType: dto.entityType,
         title: dto.title,
@@ -338,6 +365,12 @@ export class DocumentIntakeService {
         parentEntityId: dto.parentEntityId,
         changeSummary: 'Создано подтверждением загруженного документа (OCR-конвейер)',
       });
+      if (possibleDuplicateOfEntityId) {
+        await this.prisma.documentIntake.update({
+          where: { id },
+          data: { possibleDuplicateOfEntityId },
+        });
+      }
       await this.prisma.entityFile.create({
         data: { entityId: entity.id, fileId: intake.fileId, relationRole: 'scan' },
       });
@@ -397,7 +430,7 @@ export class DocumentIntakeService {
       metadata: { entityType: dto.entityType, entityId: entity.id, wasReprocessing: Boolean(intake.targetEntityId) },
     });
 
-    return entity;
+    return { ...entity, possibleDuplicateOfEntityId };
   }
 
   async reject(userId: string, familySpaceId: string, id: string) {

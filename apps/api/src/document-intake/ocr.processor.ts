@@ -5,6 +5,8 @@ import { PrismaService } from '../common/prisma.service';
 import { FilesService } from '../files/files.service';
 import { OcrService } from './ocr.service';
 import { classifyDocumentText, extractSuggestedAttributes, applyOcrQualityToClassification } from '../entity-types/document-classifier';
+import { getEntityTypeSchema } from '../entity-types/entity-type-registry';
+import { OllamaService } from '../ai-assistant/ollama.service';
 import { AuditService } from '../audit/audit.service';
 import { OCR_QUEUE_NAME } from './ocr-queue.module';
 import { OcrJobData } from './document-intake.service';
@@ -27,6 +29,7 @@ export class OcrProcessor extends WorkerHost {
     private readonly files: FilesService,
     private readonly ocr: OcrService,
     private readonly audit: AuditService,
+    private readonly ollama: OllamaService,
   ) {
     super();
   }
@@ -77,6 +80,27 @@ export class OcrProcessor extends WorkerHost {
         entityType && ocrResult.extractedText
           ? extractSuggestedAttributes(entityType, ocrResult.extractedText)
           : { attributes: {}, fieldConfidence: {} };
+
+      // Дополнение через локальную LLM (Ollama) — ТОЛЬКО если она настроена
+      // (OLLAMA_URL) и regex-извлечение нашло мало полей. Никогда не
+      // перезаписывает то, что уже нашла надёжная regex-логика — только
+      // добавляет то, чего там не было. Полностью опционально: без
+      // OLLAMA_URL этот блок не делает ни одного сетевого вызова.
+      if (entityType && ocrResult.extractedText && this.ollama.isConfigured()) {
+        const schema = getEntityTypeSchema(entityType);
+        const missingFieldCount = schema ? schema.fields.length - Object.keys(extraction.attributes).length : 0;
+        if (schema && missingFieldCount > 0) {
+          const llmResult = await this.ollama.extractFields(entityType, schema.fields, ocrResult.extractedText);
+          if (!llmResult.unavailable) {
+            for (const [key, value] of Object.entries(llmResult.attributes)) {
+              if (extraction.attributes[key] === undefined) {
+                extraction.attributes[key] = value;
+                extraction.fieldConfidence[key] = llmResult.fieldConfidence[key];
+              }
+            }
+          }
+        }
+      }
 
       await this.prisma.documentIntake.update({
         where: { id: intakeId },

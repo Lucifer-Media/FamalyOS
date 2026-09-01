@@ -26,12 +26,77 @@ export interface LlmFieldExtractionResult {
 @Injectable()
 export class OllamaService {
   private readonly logger = new Logger(OllamaService.name);
-  private readonly baseUrl = process.env.OLLAMA_URL; // например http://host.docker.internal:11434
+  private readonly baseUrl = process.env.OLLAMA_URL; // например http://100.x.x.x:11434 (домашний ПК)
+  // Резервный адрес — если основной (например, более мощный домашний ПК)
+  // недоступен или не ответил вовремя, пробуем запасной (например, тот же
+  // ThinkPad). Полностью опционально — если не задан, просто нет резерва.
+  private readonly fallbackUrl = process.env.OLLAMA_FALLBACK_URL;
   private readonly model = process.env.OLLAMA_MODEL ?? 'qwen3:8b';
   private readonly timeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS ?? 60000);
 
   isConfigured(): boolean {
     return Boolean(this.baseUrl);
+  }
+
+  /** Пробует основной адрес, при неудаче — резервный (если задан). Один и
+   * тот же запрос отправляется без изменений, просто на другой хост. */
+  private async requestWithFallback(path: string, body: unknown): Promise<Response | null> {
+    for (const url of [this.baseUrl, this.fallbackUrl].filter(Boolean) as string[]) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+        const response = await fetch(`${url}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (response.ok) return response;
+        this.logger.warn(`Ollama (${url}) ответил ${response.status}${url === this.baseUrl && this.fallbackUrl ? ' — пробуем резервный адрес' : ''}`);
+      } catch (err) {
+        this.logger.warn(`Ollama (${url}) недоступен: ${(err as Error).message}${url === this.baseUrl && this.fallbackUrl ? ' — пробуем резервный адрес' : ''}`);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Семейный ИИ-ассистент — отвечает на вопрос, опираясь ТОЛЬКО на
+   * переданные фрагменты контекста (найденные полнотекстовым поиском по
+   * реальным данным семьи, см. AiChatService). Модель НЕ имеет доступа к
+   * интернету и не должна выдумывать факты за пределами контекста — это
+   * прямо прописано в промпте. Источники (какие документы использовались)
+   * возвращаются отдельно самим AiChatService, не моделью — так надёжнее,
+   * чем просить модель их процитировать.
+   */
+  async chat(question: string, contextChunks: { title: string; entityType: string; text: string }[]): Promise<string | null> {
+    if (!this.isConfigured()) return null;
+
+    const contextBlock = contextChunks
+      .map((c, i) => `[Источник ${i + 1}: ${c.title} (${c.entityType})]\n${c.text.slice(0, 1500)}`)
+      .join('\n\n');
+
+    const prompt = [
+      'Ты — семейный ИИ-ассистент Family OS. Отвечай на вопрос пользователя ТОЛЬКО на основе',
+      'приведённых ниже источников из его личной базы данных (документы, финансы, медицина и т.д.).',
+      '',
+      'ПРАВИЛА:',
+      '1. Если ответа нет в источниках — прямо скажи, что не нашёл такую информацию. НЕ выдумывай.',
+      '2. Отвечай кратко и по делу, на русском языке.',
+      '3. Не придумывай номера документов, даты, суммы — используй только то, что реально есть в источниках.',
+      '',
+      contextChunks.length > 0 ? `Источники:\n${contextBlock}` : 'Источников не найдено — сообщи об этом пользователю.',
+      '',
+      `Вопрос пользователя: ${question}`,
+      '',
+      'Ответ:',
+    ].join('\n');
+
+    const response = await this.requestWithFallback('/api/generate', { model: this.model, prompt, think: false, stream: false });
+    if (!response) return null;
+    const data = (await response.json()) as { response?: string };
+    return data.response?.trim() ?? null;
   }
 
   /**
@@ -56,35 +121,19 @@ export class OllamaService {
 
     const prompt = buildExtractionPrompt(entityType, fields, ocrText);
 
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: this.model,
-          prompt,
-          think: false, // без режима размышления — на порядок быстрее, для извлечения полей рассуждения не нужны
-          stream: false,
-          format: 'json',
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-
-      if (!response.ok) {
-        this.logger.warn(`Ollama ответил ${response.status} — пропускаем LLM-извлечение для этого документа`);
-        return { attributes: {}, fieldConfidence: {}, unavailable: true };
-      }
-
-      const data = (await response.json()) as { response?: string };
-      return parseExtractionResponse(data.response ?? '', fields);
-    } catch (err) {
-      // Таймаут, недоступность Ollama, сбой сети — не роняем обработку документа.
-      this.logger.warn(`LLM-извлечение недоступно: ${(err as Error).message}`);
+    const response = await this.requestWithFallback('/api/generate', {
+      model: this.model,
+      prompt,
+      think: false, // без режима размышления — на порядок быстрее, для извлечения полей рассуждения не нужны
+      stream: false,
+      format: 'json',
+    });
+    if (!response) {
       return { attributes: {}, fieldConfidence: {}, unavailable: true };
     }
+
+    const data = (await response.json()) as { response?: string };
+    return parseExtractionResponse(data.response ?? '', fields);
   }
 }
 

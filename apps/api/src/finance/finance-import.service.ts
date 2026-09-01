@@ -4,7 +4,7 @@ import { PermissionsService } from '../common/permissions.service';
 import { AuditService } from '../audit/audit.service';
 import { EntitiesService } from '../entities/entities.service';
 import { parseBankStatementText, parseBankStatementRows, ParsedTransaction } from './bank-statement-parser';
-import { findReconciliationCandidates, ReconciliationTransaction } from './reconciliation';
+import { findReconciliationCandidates, ReconciliationTransaction, findTransferPairMatch } from './reconciliation';
 
 export interface StagedTransaction extends ParsedTransaction {
   isDuplicate: boolean;
@@ -102,6 +102,7 @@ export class FinanceImportService {
 
     let created = 0;
     let skippedDuplicates = 0;
+    const createdEntities: { id: string; date: string; amount: number; description: string }[] = [];
 
     for (const t of transactions) {
       const existing = await this.prisma.financialTransactionExternalId.findUnique({
@@ -134,6 +135,18 @@ export class FinanceImportService {
         data: { familySpaceId, accountEntityId, externalId: t.externalId, transactionEntityId: entity.id },
       });
       created++;
+      createdEntities.push({ id: entity.id, date: t.date, amount: t.amount, description: t.description });
+    }
+
+    // "Мапинг переводов между счетами" — если операция похожа на перевод
+    // между своими счетами (по описанию), ищем в ДРУГИХ счетах этого же
+    // пространства операцию с противоположной суммой близко по дате и
+    // связываем их как пару перевода. Работает и для только что
+    // импортированных операций, и для уже существующих в других счетах.
+    const transferKeywords = /между своими счетами|перевод между собственными счетами|между собственными счетами/i;
+    for (const tx of createdEntities) {
+      if (!transferKeywords.test(tx.description)) continue;
+      await this.tryLinkTransferPair(userId, familySpaceId, accountEntityId, tx);
     }
 
     await this.audit.log({
@@ -146,6 +159,36 @@ export class FinanceImportService {
     });
 
     return { created, skippedDuplicates };
+  }
+
+  /**
+   * Ищет в ДРУГИХ счетах этого пространства операцию-пару для перевода
+   * (противоположная сумма, дата в пределах 3 дней, ещё не связана) и, если
+   * находит, помечает обе операции как TRANSFER со взаимной ссылкой.
+   * Не создаёт ничего нового — только связывает уже существующие записи.
+   */
+  private async tryLinkTransferPair(
+    userId: string,
+    familySpaceId: string,
+    excludeAccountId: string,
+    tx: { id: string; date: string; amount: number },
+  ): Promise<void> {
+    const candidates = await this.prisma.entity.findMany({
+      where: { familySpaceId, entityType: 'financial_transaction', status: 'ACTIVE', id: { not: tx.id } },
+      select: { id: true, attributes: true },
+    });
+
+    const match = findTransferPairMatch(excludeAccountId, tx, candidates);
+    if (!match) return;
+
+    await this.entities.update(userId, familySpaceId, tx.id, {
+      attributes: { transactionType: 'TRANSFER', relatedTransactionId: match },
+      changeSummary: 'Автоматически связано как перевод между своими счетами',
+    });
+    await this.entities.update(userId, familySpaceId, match, {
+      attributes: { transactionType: 'TRANSFER', relatedTransactionId: tx.id },
+      changeSummary: 'Автоматически связано как перевод между своими счетами',
+    });
   }
 
   async findReconciliationCandidatesForDocument(userId: string, familySpaceId: string, documentEntityId: string) {

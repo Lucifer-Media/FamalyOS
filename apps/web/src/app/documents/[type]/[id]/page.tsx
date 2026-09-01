@@ -8,7 +8,9 @@ import { useEntityTypeSchema } from '@/lib/use-entity-types';
 import { DynamicEntityForm } from '@/components/dynamic-entity-form';
 import { apiFetch, ApiError, getAccessToken, getCurrentFamilySpaceId } from '@/lib/api';
 import { Button, Card, ErrorText } from '@/components/ui';
-import { History, Save, Paperclip, Download, ScanLine } from 'lucide-react';
+import { History, Save, Paperclip, Download, ScanLine, Archive, ArchiveRestore } from 'lucide-react';
+import { UtilityBillPanels } from '@/components/utility-bill-panels';
+import { toast } from 'sonner';
 
 interface AttachedFile {
   fileId: string;
@@ -21,6 +23,7 @@ interface AttachedFile {
 interface EntityDetail {
   id: string;
   title: string;
+  status: string;
   currentVersion: number;
   attributes: Record<string, unknown>;
   confidentialityLevel: string;
@@ -46,6 +49,7 @@ export default function EntityDetailPage() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
+  const [archiveBusy, setArchiveBusy] = useState(false);
   const reprocessInputRef = useRef<HTMLInputElement>(null);
 
   async function load() {
@@ -101,6 +105,21 @@ export default function EntityDetailPage() {
     await loadVersions();
   }
 
+  async function onToggleArchive() {
+    if (!entity) return;
+    setArchiveBusy(true);
+    try {
+      const nextAction = entity.status === 'ARCHIVED' ? 'unarchive' : 'archive';
+      const updated = await apiFetch<EntityDetail>(`/entities/${params.id}/${nextAction}`, { method: 'PATCH' });
+      setEntity(updated);
+      toast.success(nextAction === 'archive' ? 'Запись архивирована' : 'Запись восстановлена из архива');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Не удалось изменить статус записи');
+    } finally {
+      setArchiveBusy(false);
+    }
+  }
+
   async function onReprocessFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -137,7 +156,12 @@ export default function EntityDetailPage() {
       {entity && schema && (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h1 className="font-display text-xl font-semibold text-ink">{entity.title}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="font-display text-xl font-semibold text-ink">{entity.title}</h1>
+              {entity.status === 'ARCHIVED' && (
+                <span className="rounded-full bg-gold/15 px-2 py-0.5 text-xs font-medium text-gold">В архиве</span>
+              )}
+            </div>
             <div className="flex gap-2">
               <input ref={reprocessInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={onReprocessFile} />
               <Button variant="secondary" onClick={() => reprocessInputRef.current?.click()} disabled={reprocessing}>
@@ -145,6 +169,10 @@ export default function EntityDetailPage() {
               </Button>
               <Button variant="secondary" onClick={loadVersions}>
                 <History size={16} /> Версии (v{entity.currentVersion})
+              </Button>
+              <Button variant="secondary" onClick={onToggleArchive} disabled={archiveBusy}>
+                {entity.status === 'ARCHIVED' ? <ArchiveRestore size={16} /> : <Archive size={16} />}
+                {entity.status === 'ARCHIVED' ? 'Восстановить' : 'Архивировать'}
               </Button>
               <Button onClick={onSave} disabled={saving}>
                 <Save size={16} /> {saving ? 'Сохраняем…' : 'Сохранить'}
@@ -155,6 +183,10 @@ export default function EntityDetailPage() {
           <Card className="mt-4">
             <DynamicEntityForm schema={schema} values={values} onChange={(k, v) => setValues((s) => ({ ...s, [k]: v }))} />
           </Card>
+
+          {params.type === 'utility_bill' && (
+            <UtilityBillPanels billId={params.id} billDate={values.dueDate as string | undefined} />
+          )}
 
           {files.length > 0 && (
             <Card className="mt-4">

@@ -45,7 +45,7 @@ describe('FinanceAnalyticsService — агрегация по дате ОПЕР�
 });
 
 describe('FinanceAnalyticsService.getBudgetStatus', () => {
-  it('считает потрачено только по операциям, реально связанным с этим бюджетом', async () => {
+  it('считает потрачено по операциям, явно связанным с этим бюджетом (budgetId)', async () => {
     const budget = { id: 'b1', title: 'Бюджет на еду (июнь)', familySpaceId: 'f1', entityType: 'budget', attributes: { plannedExpense: 20000 } };
     const service = makeService(
       [
@@ -58,6 +58,50 @@ describe('FinanceAnalyticsService.getBudgetStatus', () => {
     );
     const status = await service.getBudgetStatus('u1', 'f1', 'b1');
     expect(status).toMatchObject({ plannedExpense: 20000, spent: 8000, remaining: 12000, percentUsed: 40 });
+  });
+
+  it('РЕГРЕССИЯ: считает потрачено по категории+периоду, даже БЕЗ явной привязки budgetId (реальный баг — раньше бюджет всегда показывал 0)', async () => {
+    const budget = {
+      id: 'b1',
+      title: 'Продукты',
+      familySpaceId: 'f1',
+      entityType: 'budget',
+      attributes: { plannedExpense: 30000, categories: 'Продукты', startDate: '2026-08-01', endDate: '2026-08-31' },
+    };
+    const service = makeService(
+      [
+        // Реальные операции с вашей выписки — категория "Продукты", без явного budgetId
+        { attributes: { category: 'Продукты', amount: -632.43, date: '2026-08-21' } },
+        { attributes: { category: 'Продукты', amount: -238, date: '2026-08-19' } },
+        { attributes: { category: 'Продукты', amount: -1645.48, date: '2026-08-19' } },
+        { attributes: { category: 'Фастфуд', amount: -2133, date: '2026-08-22' } }, // другая категория — не должна учитываться
+        { attributes: { category: 'Продукты', amount: -500, date: '2026-07-15' } }, // вне периода бюджета
+      ],
+      budget,
+    );
+    const status = await service.getBudgetStatus('u1', 'f1', 'b1');
+    expect(status?.spent).toBeCloseTo(632.43 + 238 + 1645.48, 2);
+  });
+
+  it('при наличии categoryId у бюджета — сопоставляет операции по справочной категории, а не по тексту', async () => {
+    const budget = {
+      id: 'b2',
+      title: 'Продукты (справочник)',
+      familySpaceId: 'f1',
+      entityType: 'budget',
+      attributes: { plannedExpense: 20000, categoryId: 'cat-groceries', startDate: '2026-08-01', endDate: '2026-08-31' },
+    };
+    const service = makeService(
+      [
+        { attributes: { categoryId: 'cat-groceries', amount: -1000, date: '2026-08-05' } },
+        { attributes: { categoryId: 'cat-groceries', amount: -500, date: '2026-08-10' } },
+        // Другая категория из справочника — не должна учитываться, даже если текстовое поле совпадает
+        { attributes: { categoryId: 'cat-other', category: 'Продукты', amount: -9999, date: '2026-08-10' } },
+      ],
+      budget,
+    );
+    const status = await service.getBudgetStatus('u1', 'f1', 'b2');
+    expect(status?.spent).toBeCloseTo(1500, 2);
   });
 
   it('для несуществующего бюджета возвращает null, не выдумывает данные', async () => {

@@ -66,6 +66,14 @@ services:
       FILE_STORAGE_ROOT: /app/uploads
       PORT: 3001
       CORS_ORIGIN: ${CORS_ORIGIN:-http://192.168.1.18:3400}
+      # Локальная LLM (Ollama) работает на хосте, не в Docker — контейнеру нужен
+      # доступ к хост-машине. OLLAMA_URL не задан по умолчанию: без него весь
+      # AI-функционал (чат, доп. извлечение полей) отключается автоматически,
+      # остальной конвейер продолжает работать как раньше.
+      OLLAMA_URL: ${OLLAMA_URL:-}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - family_os_uploads:/app/uploads
       - family_os_tesseract_cache:/app/.cache/tesseract # временный кэш воркеров OCR (языковые данные уже встроены в образ, сеть не нужна)

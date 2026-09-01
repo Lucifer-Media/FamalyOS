@@ -19,6 +19,8 @@ import { PassportRfModule } from './passport-rf/passport-rf.module';
 import { FirstAidKitsModule } from './first-aid-kits/first-aid-kits.module';
 import { FinanceModule } from './finance/finance.module';
 import { CurrencyRatesModule } from './currency-rates/currency-rates.module';
+import { UtilitiesModule } from './utilities/utilities.module';
+import { AiAssistantModule } from './ai-assistant/ai-assistant.module';
 
 @Module({
   imports: [
@@ -40,6 +42,8 @@ import { CurrencyRatesModule } from './currency-rates/currency-rates.module';
     FirstAidKitsModule,
     FinanceModule,
     CurrencyRatesModule,
+    UtilitiesModule,
+    AiAssistantModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
   controllers: [HealthController],
