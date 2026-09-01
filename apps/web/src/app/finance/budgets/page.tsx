@@ -16,7 +16,14 @@ interface BudgetSummary {
   id: string;
   title: string;
   status: string;
-  attributes: { budgetName?: string; plannedExpense?: number; currency?: string; startDate?: string; endDate?: string };
+  attributes: {
+    budgetName?: string;
+    plannedExpense?: number;
+    currency?: string;
+    startDate?: string;
+    endDate?: string;
+    alertThresholdPercent?: number;
+  };
 }
 
 interface MatchedTransaction {
@@ -167,6 +174,16 @@ export default function BudgetsPage() {
                 {b.status === 'ARCHIVED' && (
                   <div className="mt-1">
                     <Badge tone="gold">В архиве</Badge>
+                  </div>
+                )}
+                {status && b.attributes.alertThresholdPercent && percent >= b.attributes.alertThresholdPercent && percent < 100 && (
+                  <div className="mt-1">
+                    <Badge tone="gold">Приближается к лимиту ({percent}%)</Badge>
+                  </div>
+                )}
+                {status && percent >= 100 && (
+                  <div className="mt-1">
+                    <Badge tone="clay">Лимит превышен</Badge>
                   </div>
                 )}
                 {status && (

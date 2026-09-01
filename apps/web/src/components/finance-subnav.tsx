@@ -5,10 +5,13 @@ import clsx from 'clsx';
 
 const ITEMS: { href: string; label: string }[] = [
   { href: '/finance', label: 'Счета' },
+  { href: '/finance/transactions', label: 'Транзакции' },
   { href: '/finance/dashboard', label: 'Дашборд' },
   { href: '/finance/budgets', label: 'Бюджеты' },
+  { href: '/finance/calendar', label: 'Календарь' },
   { href: '/finance/categories', label: 'Категории' },
   { href: '/finance/analytics', label: 'Аналитика' },
+  { href: '/finance/portfolio', label: 'Портфель' },
 ];
 
 /**
