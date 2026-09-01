@@ -80,6 +80,26 @@ export class FinanceController {
     return this.analytics.compareWithPreviousPeriod(userId, familySpaceId, startDate, endDate);
   }
 
+  @Get('analytics/by-participant')
+  getAnalyticsByParticipant(
+    @CurrentUser() userId: string,
+    @FamilySpaceId() familySpaceId: string,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+  ) {
+    return this.analytics.getAnalyticsByParticipant(userId, familySpaceId, startDate, endDate);
+  }
+
+  @Get('analytics/heatmap')
+  getSpendingHeatmap(
+    @CurrentUser() userId: string,
+    @FamilySpaceId() familySpaceId: string,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+  ) {
+    return this.analytics.getSpendingHeatmap(userId, familySpaceId, startDate, endDate);
+  }
+
   @Get('budgets/:budgetId/status')
   getBudgetStatus(
     @CurrentUser() userId: string,

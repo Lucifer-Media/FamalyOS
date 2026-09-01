@@ -8,6 +8,7 @@ import { useEntityTypeSchema } from '@/lib/use-entity-types';
 import { DynamicEntityForm } from '@/components/dynamic-entity-form';
 import { FinanceSubNav } from '@/components/finance-subnav';
 import { BankAvatar } from '@/components/bank-avatar';
+import PersonSelect, { usePeople } from '@/components/ui/person-select';
 import { apiFetch, ApiError } from '@/lib/api';
 import { Button, Card, ErrorText, Badge } from '@/components/ui';
 import { toast } from 'sonner';
@@ -17,6 +18,7 @@ interface AccountSummary {
   id: string;
   title: string;
   status: string;
+  ownerPersonId?: string | null;
   attributes: {
     bankId?: string;
     bankName?: string;
@@ -42,6 +44,8 @@ export default function FinancePage() {
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [ownerPersonId, setOwnerPersonId] = useState<string | undefined>(undefined);
+  const people = usePeople();
 
   async function load() {
     const [active, archived, bankList] = await Promise.all([
@@ -64,10 +68,11 @@ export default function FinancePage() {
       const title = `${values.bankName ?? 'Счёт'} (${values.accountType ?? ''})`;
       await apiFetch('/entities', {
         method: 'POST',
-        body: { entityType: 'bank_account', title, attributes: values },
+        body: { entityType: 'bank_account', title, attributes: values, ownerPersonId },
       });
       setCreating(false);
       setValues({});
+      setOwnerPersonId(undefined);
       await load();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Не удалось создать счёт');
@@ -116,6 +121,10 @@ export default function FinancePage() {
       {creating && schema && (
         <Card className="animate-in mt-4">
           <DynamicEntityForm schema={schema} values={values} onChange={(k, v) => setValues((s) => ({ ...s, [k]: v }))} />
+          <div className="mt-3">
+            <label className="mb-1 block text-xs text-ink/50">Владелец счёта (участник семьи)</label>
+            <PersonSelect value={ownerPersonId} onChange={setOwnerPersonId} />
+          </div>
           <div className="mt-3 flex gap-2">
             <Button onClick={onCreate}>Сохранить</Button>
             <Button variant="secondary" onClick={() => setCreating(false)}>
@@ -171,6 +180,9 @@ export default function FinancePage() {
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {acc.attributes.currency && <Badge tone="default">{acc.attributes.currency}</Badge>}
+                  {acc.ownerPersonId && (
+                    <Badge tone="default">{people.find((p) => p.id === acc.ownerPersonId)?.fullName ?? 'Участник'}</Badge>
+                  )}
                   {acc.status === 'ARCHIVED' && <Badge tone="gold">В архиве</Badge>}
                 </div>
               </Card>

@@ -8,16 +8,19 @@ import { useEntityTypeSchema } from '@/lib/use-entity-types';
 import { DynamicEntityForm } from '@/components/dynamic-entity-form';
 import { FinanceSubNav } from '@/components/finance-subnav';
 import { BankAvatar } from '@/components/bank-avatar';
+import PersonSelect from '@/components/ui/person-select';
 import { apiFetch, ApiError } from '@/lib/api';
 import { Button, Card, ErrorText, Badge } from '@/components/ui';
 import { toast } from 'sonner';
-import { Upload, ArrowUpRight, ArrowDownLeft, Plus, Pencil, X, Save, Archive, ArchiveRestore, History, Globe } from 'lucide-react';
+import { Upload, ArrowUpRight, ArrowDownLeft, Plus, Pencil, X, Save, Archive, ArchiveRestore, History, Globe, CalendarClock } from 'lucide-react';
+import EntityLinkSelect from '@/components/ui/entity-link-select';
 
 interface AccountDetail {
   id: string;
   title: string;
   status: string;
   currentVersion: number;
+  ownerPersonId?: string | null;
   attributes: {
     bankId?: string;
     bankName?: string;
@@ -56,8 +59,11 @@ interface TransactionSummary {
     currency: string;
     description: string;
     category?: string;
+    categoryId?: string;
     transactionType?: string;
     scope?: string;
+    isPlanned?: boolean;
+    plannedStatus?: 'PLANNED' | 'COMPLETED' | 'CANCELLED';
   };
 }
 
@@ -73,18 +79,13 @@ interface StagedTransaction {
   isDuplicate: boolean;
 }
 
-// Частые категории — просто подсказки в datalist, пользователь может ввести свою.
-const COMMON_CATEGORIES = [
-  'Продукты', 'Транспорт', 'ЖКХ', 'Рестораны и кафе', 'Здоровье', 'Развлечения',
-  'Одежда', 'Путешествия', 'Связь', 'Подписки', 'Между своими счетами', 'Зарплата', 'Прочее',
-];
-
 interface TransactionFormState {
   date: string;
   amount: string;
-  category: string;
+  categoryId: string;
   description: string;
   scope: string;
+  isPlanned: boolean;
 }
 
 export default function AccountDetailPage() {
@@ -109,20 +110,25 @@ export default function AccountDetailPage() {
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   const [showVersions, setShowVersions] = useState(false);
+  const [ownerPersonId, setOwnerPersonId] = useState<string | undefined>(undefined);
 
   // Ручное добавление / редактирование одной операции — одна и та же форма для обоих случаев.
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
-  const [form, setForm] = useState<TransactionFormState>({ date: '', amount: '', category: '', description: '', scope: 'FAMILY' });
+  const [form, setForm] = useState<TransactionFormState>({ date: '', amount: '', categoryId: '', description: '', scope: 'FAMILY', isPlanned: false });
   const [saving, setSaving] = useState(false);
+  const [categories, setCategories] = useState<Record<string, string>>({});
 
   async function load() {
-    const [acc, txs] = await Promise.all([
+    const [acc, txs, cats] = await Promise.all([
       apiFetch<AccountDetail>(`/entities/${params.id}`),
       apiFetch<TransactionSummary[]>(`/entities?entityType=financial_transaction`),
+      apiFetch<{ id: string; title: string }[]>(`/entities?entityType=financial_category`),
     ]);
     setAccount(acc);
     setAccountValues(acc.attributes ?? {});
+    setOwnerPersonId(acc.ownerPersonId ?? undefined);
     setTransactions((txs as any).filter((t: any) => t.attributes?.accountId === params.id));
+    setCategories(Object.fromEntries(cats.map((c) => [c.id, c.title])));
     if (acc.attributes.bankId) {
       apiFetch<BankDetail>(`/entities/${acc.attributes.bankId}`)
         .then(setBank)
@@ -142,10 +148,11 @@ export default function AccountDetailPage() {
     try {
       const updated = await apiFetch<AccountDetail>(`/entities/${params.id}`, {
         method: 'PATCH',
-        body: { attributes: accountValues },
+        body: { attributes: accountValues, ownerPersonId },
       });
       setAccount(updated);
       setAccountValues(updated.attributes ?? {});
+      setOwnerPersonId(updated.ownerPersonId ?? undefined);
       setEditingAccount(false);
       toast.success('Реквизиты счёта сохранены');
     } catch (e) {
@@ -228,7 +235,7 @@ export default function AccountDetailPage() {
   }
 
   function openNewTransaction() {
-    setForm({ date: new Date().toISOString().slice(0, 10), amount: '', category: '', description: '', scope: 'FAMILY' });
+    setForm({ date: new Date().toISOString().slice(0, 10), amount: '', categoryId: '', description: '', scope: 'FAMILY', isPlanned: false });
     setEditingId('new');
   }
 
@@ -236,9 +243,10 @@ export default function AccountDetailPage() {
     setForm({
       date: t.attributes.date,
       amount: String(t.attributes.amount),
-      category: t.attributes.category ?? '',
+      categoryId: t.attributes.categoryId ?? '',
       description: t.attributes.description ?? '',
       scope: t.attributes.scope ?? 'FAMILY',
+      isPlanned: t.attributes.isPlanned === true,
     });
     setEditingId(t.id);
   }
@@ -260,10 +268,15 @@ export default function AccountDetailPage() {
         currency: account.attributes.currency ?? 'RUB',
         accountId: params.id,
         description: form.description || (amount < 0 ? 'Расход' : 'Доход'),
-        category: form.category || undefined,
+        categoryId: form.categoryId || undefined,
+        // Текстовое поле категории поддерживается для обратной совместимости
+        // со старыми бюджетами/аналитикой, которые ещё матчатся по тексту.
+        category: form.categoryId ? categories[form.categoryId] : undefined,
         scope: form.scope || undefined,
         transactionType: amount < 0 ? 'EXPENSE' : 'INCOME',
         source: 'MANUAL',
+        isPlanned: form.isPlanned,
+        plannedStatus: form.isPlanned ? 'PLANNED' : undefined,
       };
       if (editingId === 'new') {
         await apiFetch('/entities', {
@@ -356,6 +369,7 @@ export default function AccountDetailPage() {
                     variant="secondary"
                     onClick={() => {
                       setAccountValues(account.attributes);
+                      setOwnerPersonId(account.ownerPersonId ?? undefined);
                       setEditingAccount(false);
                     }}
                   >
@@ -372,6 +386,10 @@ export default function AccountDetailPage() {
                   onChange={(k, v) => setAccountValues((s) => ({ ...s, [k]: v }))}
                   disabled={!editingAccount}
                 />
+                <div className="mt-3 max-w-xs">
+                  <label className="mb-1 block text-xs text-ink/50">Владелец счёта (участник семьи)</label>
+                  <PersonSelect value={ownerPersonId} onChange={setOwnerPersonId} disabled={!editingAccount} />
+                </div>
               </div>
             )}
             {bank && (
@@ -438,18 +456,12 @@ export default function AccountDetailPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-ink/50">Категория</label>
-                  <input
-                    list="category-suggestions"
-                    value={form.category}
-                    onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-                    className="w-full rounded-card border border-line bg-paper px-3 py-1.5 text-sm"
-                    placeholder="Продукты, Транспорт…"
+                  <EntityLinkSelect
+                    entityType="financial_category"
+                    value={form.categoryId || undefined}
+                    onChange={(id) => setForm((f) => ({ ...f, categoryId: id ?? '' }))}
+                    placeholder="Начните ввод для поиска категории…"
                   />
-                  <datalist id="category-suggestions">
-                    {COMMON_CATEGORIES.map((c) => (
-                      <option key={c} value={c} />
-                    ))}
-                  </datalist>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-ink/50">Описание</label>
@@ -470,6 +482,16 @@ export default function AccountDetailPage() {
                     <option value="PERSONAL">Личный</option>
                   </select>
                 </div>
+                <label className="flex items-center gap-2 pt-6 text-sm text-ink/80">
+                  <input
+                    type="checkbox"
+                    checked={form.isPlanned}
+                    onChange={(e) => setForm((f) => ({ ...f, isPlanned: e.target.checked }))}
+                    className="h-4 w-4 rounded border-line"
+                  />
+                  <CalendarClock size={14} className="text-ink/40" />
+                  Плановая операция (ещё не произошла по факту)
+                </label>
               </div>
               <div className="mt-3 flex gap-2">
                 <Button onClick={onSaveTransaction} disabled={saving}>
@@ -534,9 +556,16 @@ export default function AccountDetailPage() {
                         <ArrowDownLeft size={14} className="text-moss-600" />
                       )}
                       <div>
-                        <p className="text-ink">{t.attributes.description}</p>
+                        <p className="flex items-center gap-1.5 text-ink">
+                          {t.attributes.description}
+                          {t.attributes.isPlanned && (t.attributes.plannedStatus ?? 'PLANNED') === 'PLANNED' && (
+                            <Badge tone="gold">план</Badge>
+                          )}
+                        </p>
                         <p className="text-xs text-ink/40">
-                          {t.attributes.date} {t.attributes.category ? `· ${t.attributes.category}` : ''}
+                          {t.attributes.date}
+                          {(t.attributes.categoryId ? categories[t.attributes.categoryId] : t.attributes.category) &&
+                            ` · ${t.attributes.categoryId ? categories[t.attributes.categoryId] : t.attributes.category}`}
                           {t.attributes.scope === 'PERSONAL' && ' · личный'}
                         </p>
                       </div>
