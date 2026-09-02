@@ -9,6 +9,7 @@ import { DynamicEntityForm } from '@/components/dynamic-entity-form';
 import { FinanceSubNav } from '@/components/finance-subnav';
 import { BankAvatar } from '@/components/bank-avatar';
 import PersonSelect from '@/components/ui/person-select';
+import ArchiveAccountDialog from '@/components/archive-account-dialog';
 import { apiFetch, ApiError } from '@/lib/api';
 import { Button, Card, ErrorText, Badge } from '@/components/ui';
 import { toast } from 'sonner';
@@ -74,6 +75,7 @@ interface StagedTransaction {
   description: string;
   counterparty?: string;
   category?: string;
+  categoryId?: string;
   externalId: string;
   sourceFormat: string;
   isDuplicate: boolean;
@@ -111,6 +113,8 @@ export default function AccountDetailPage() {
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   const [showVersions, setShowVersions] = useState(false);
   const [ownerPersonId, setOwnerPersonId] = useState<string | undefined>(undefined);
+  const [allAccounts, setAllAccounts] = useState<{ id: string; title: string; status: string }[]>([]);
+  const [showArchiveDialog, setShowArchiveDialog] = useState(false);
 
   // Ручное добавление / редактирование одной операции — одна и та же форма для обоих случаев.
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
@@ -129,6 +133,9 @@ export default function AccountDetailPage() {
     setOwnerPersonId(acc.ownerPersonId ?? undefined);
     setTransactions((txs as any).filter((t: any) => t.attributes?.accountId === params.id));
     setCategories(Object.fromEntries(cats.map((c) => [c.id, c.title])));
+    apiFetch<{ id: string; title: string; status: string }[]>('/entities?entityType=bank_account')
+      .then(setAllAccounts)
+      .catch(() => undefined);
     if (acc.attributes.bankId) {
       apiFetch<BankDetail>(`/entities/${acc.attributes.bankId}`)
         .then(setBank)
@@ -168,14 +175,17 @@ export default function AccountDetailPage() {
 
   async function onToggleArchive() {
     if (!account) return;
+    if (account.status !== 'ARCHIVED') {
+      setShowArchiveDialog(true);
+      return;
+    }
     setArchiveBusy(true);
     try {
-      const nextAction = account.status === 'ARCHIVED' ? 'unarchive' : 'archive';
-      const updated = await apiFetch<AccountDetail>(`/entities/${params.id}/${nextAction}`, { method: 'PATCH' });
+      const updated = await apiFetch<AccountDetail>(`/entities/${params.id}/unarchive`, { method: 'PATCH' });
       setAccount(updated);
-      toast.success(nextAction === 'archive' ? 'Счёт архивирован' : 'Счёт восстановлен из архива');
+      toast.success('Счёт восстановлен из архива');
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : 'Не удалось изменить статус счёта');
+      toast.error(e instanceof ApiError ? e.message : 'Не удалось восстановить счёт');
     } finally {
       setArchiveBusy(false);
     }
@@ -411,6 +421,19 @@ export default function AccountDetailPage() {
             )}
           </Card>
 
+          {showArchiveDialog && account && (
+            <ArchiveAccountDialog
+              accountId={account.id}
+              accountTitle={account.title}
+              otherAccounts={allAccounts.filter((a) => a.id !== account.id && a.status !== 'ARCHIVED')}
+              onCancel={() => setShowArchiveDialog(false)}
+              onDone={() => {
+                setShowArchiveDialog(false);
+                load();
+              }}
+            />
+          )}
+
           {showVersions && (
             <Card className="mt-4">
               <h3 className="font-display text-lg font-semibold">История изменений счёта</h3>
@@ -514,6 +537,12 @@ export default function AccountDetailPage() {
                 Новых операций: <strong>{newCount}</strong>, уже импортировано ранее (пропускаются):{' '}
                 <strong>{dupCount}</strong> из {staged.length} всего.
               </p>
+              {staged.some((t) => t.category && !t.categoryId) && (
+                <p className="mt-1 text-xs text-ink/50">
+                  У части операций категория из выписки не найдена в справочнике — они импортируются{' '}
+                  <strong>без категории</strong>, категорию можно будет выбрать вручную на странице «Транзакции».
+                </p>
+              )}
               <div className="mt-3 max-h-64 overflow-y-auto">
                 <table className="w-full text-xs">
                   <tbody>
@@ -525,6 +554,17 @@ export default function AccountDetailPage() {
                           {t.amount} {t.currency}
                         </td>
                         <td className="py-1 pr-2 truncate">{t.description}</td>
+                        <td className="py-1 pr-2 whitespace-nowrap">
+                          {t.categoryId ? (
+                            <span className="text-ink/60">{t.category}</span>
+                          ) : t.category ? (
+                            <span title="Не удалось сопоставить со справочником категорий — импортируется без категории, выберите вручную после импорта">
+                              <Badge tone="gold">{t.category} · без справочника</Badge>
+                            </span>
+                          ) : (
+                            <span className="text-ink/30">—</span>
+                          )}
+                        </td>
                         <td className="py-1">{t.isDuplicate && <Badge tone="gold">дубль</Badge>}</td>
                       </tr>
                     ))}

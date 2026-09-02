@@ -1,4 +1,4 @@
-import { FinanceAnalyticsService } from '../finance-analytics.service';
+import { FinanceAnalyticsService, isActualTransaction } from '../finance-analytics.service';
 
 function makeService(transactions: { attributes: Record<string, unknown> }[], budget?: any) {
   const prisma = {
@@ -108,5 +108,52 @@ describe('FinanceAnalyticsService.getBudgetStatus', () => {
     const service = makeService([]);
     const status = await service.getBudgetStatus('u1', 'f1', 'nonexistent');
     expect(status).toBeNull();
+  });
+});
+
+describe('isActualTransaction — плановые операции не должны попадать в факт', () => {
+  it('обычная операция без isPlanned считается фактической', () => {
+    expect(isActualTransaction({ amount: -100 })).toBe(true);
+  });
+  it('isPlanned=true и статус PLANNED (или не указан) — не факт', () => {
+    expect(isActualTransaction({ isPlanned: true })).toBe(false);
+    expect(isActualTransaction({ isPlanned: true, plannedStatus: 'PLANNED' })).toBe(false);
+  });
+  it('isPlanned=true, но plannedStatus=COMPLETED — уже факт', () => {
+    expect(isActualTransaction({ isPlanned: true, plannedStatus: 'COMPLETED' })).toBe(true);
+  });
+  it('isPlanned=true, plannedStatus=CANCELLED — отменена, тоже не факт', () => {
+    expect(isActualTransaction({ isPlanned: true, plannedStatus: 'CANCELLED' })).toBe(false);
+  });
+});
+
+describe('FinanceAnalyticsService — плановые операции исключены из факта', () => {
+  it('getAnalyticsByCategory не учитывает плановые операции', async () => {
+    const service = makeService([
+      { attributes: { date: '2026-06-05', amount: -500, category: 'Транспорт' } },
+      { attributes: { date: '2026-06-10', amount: -9999, category: 'Транспорт', isPlanned: true, plannedStatus: 'PLANNED' } },
+    ]);
+    const result = await service.getAnalyticsByCategory('u1', 'f1', '2026-06-01', '2026-06-30');
+    const transport = result.find((r) => r.category === 'Транспорт');
+    expect(transport?.expense).toBe(500);
+  });
+
+  it('getBudgetStatus не учитывает плановые операции в потраченной сумме', async () => {
+    const budget = {
+      id: 'b3',
+      title: 'Продукты',
+      familySpaceId: 'f1',
+      entityType: 'budget',
+      attributes: { plannedExpense: 10000, categories: 'продукты', startDate: '2026-08-01', endDate: '2026-08-31' },
+    };
+    const service = makeService(
+      [
+        { attributes: { category: 'продукты', amount: -1000, date: '2026-08-05' } },
+        { attributes: { category: 'продукты', amount: -5000, date: '2026-08-10', isPlanned: true } },
+      ],
+      budget,
+    );
+    const status = await service.getBudgetStatus('u1', 'f1', 'b3');
+    expect(status?.spent).toBe(1000);
   });
 });

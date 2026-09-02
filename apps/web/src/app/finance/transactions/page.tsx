@@ -8,7 +8,7 @@ import EntityLinkSelect from '@/components/ui/entity-link-select';
 import { apiFetch, ApiError } from '@/lib/api';
 import { Button, Card, ErrorText, Badge } from '@/components/ui';
 import { toast } from 'sonner';
-import { Plus, Pencil, ArrowUpRight, ArrowDownLeft, CalendarClock, Archive, Download } from 'lucide-react';
+import { Plus, Pencil, ArrowUpRight, ArrowDownLeft, CalendarClock, Archive, Download, ArrowLeftRight } from 'lucide-react';
 
 interface TransactionEntity {
   id: string;
@@ -70,6 +70,13 @@ export default function TransactionsPage() {
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+
+  // Перевод между своими счетами — отдельная мини-форма: две ссылки на
+  // счета (откуда/куда) вместо одной, создаёт сразу пару связанных
+  // операций (расход на одном счёте + доход на другом).
+  const [transferMode, setTransferMode] = useState(false);
+  const [transferForm, setTransferForm] = useState({ date: '', amount: '', fromAccountId: '', toAccountId: '', description: 'Между своими счетами' });
+  const [transferSaving, setTransferSaving] = useState(false);
 
   async function load() {
     const [txs, accs, cats] = await Promise.all([
@@ -193,6 +200,79 @@ export default function TransactionsPage() {
     }
   }
 
+  function openTransfer() {
+    setTransferForm({
+      date: new Date().toISOString().slice(0, 10),
+      amount: '',
+      fromAccountId: accounts[0]?.id ?? '',
+      toAccountId: accounts[1]?.id ?? accounts[0]?.id ?? '',
+      description: 'Между своими счетами',
+    });
+    setTransferMode(true);
+  }
+
+  async function onSaveTransfer() {
+    const amount = Math.abs(Number(transferForm.amount));
+    if (!transferForm.date || !amount || !transferForm.fromAccountId || !transferForm.toAccountId) {
+      toast.error('Укажите дату, сумму и оба счёта');
+      return;
+    }
+    if (transferForm.fromAccountId === transferForm.toAccountId) {
+      toast.error('Счёт списания и счёт зачисления должны отличаться');
+      return;
+    }
+    setTransferSaving(true);
+    try {
+      const fromAccount = accountById[transferForm.fromAccountId];
+      const toAccount = accountById[transferForm.toAccountId];
+      const outgoing = await apiFetch<TransactionEntity>('/entities', {
+        method: 'POST',
+        body: {
+          entityType: 'financial_transaction',
+          title: `${transferForm.date}: ${transferForm.description}`,
+          attributes: {
+            date: transferForm.date,
+            amount: -amount,
+            currency: fromAccount?.attributes.currency ?? 'RUB',
+            accountId: transferForm.fromAccountId,
+            description: transferForm.description || 'Между своими счетами',
+            category: 'Между своими счетами',
+            transactionType: 'TRANSFER',
+            source: 'MANUAL',
+          },
+        },
+      });
+      const incoming = await apiFetch<TransactionEntity>('/entities', {
+        method: 'POST',
+        body: {
+          entityType: 'financial_transaction',
+          title: `${transferForm.date}: ${transferForm.description}`,
+          attributes: {
+            date: transferForm.date,
+            amount,
+            currency: toAccount?.attributes.currency ?? 'RUB',
+            accountId: transferForm.toAccountId,
+            description: transferForm.description || 'Между своими счетами',
+            category: 'Между своими счетами',
+            transactionType: 'TRANSFER',
+            source: 'MANUAL',
+          },
+        },
+      });
+      // Связываем пару операций перевода взаимной ссылкой — та же схема,
+      // что и для переводов, автоматически распознанных при импорте выписки.
+      await apiFetch(`/entities/${outgoing.id}`, { method: 'PATCH', body: { attributes: { relatedTransactionId: incoming.id } } });
+      await apiFetch(`/entities/${incoming.id}`, { method: 'PATCH', body: { attributes: { relatedTransactionId: outgoing.id } } });
+      toast.success('Перевод между счетами добавлен');
+      setTransferMode(false);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Не удалось сохранить перевод');
+    } finally {
+      setTransferSaving(false);
+    }
+  }
+
   function onExportCsv() {
     const header = ['Дата', 'Категория', 'Описание', 'Счёт', 'Сумма', 'Валюта', 'Плановая'];
     const rows = filtered
@@ -233,7 +313,10 @@ export default function TransactionsPage() {
         </Button>
       </div>
 
-      <div className="mt-2 flex justify-end">
+      <div className="mt-2 flex justify-end gap-2">
+        <Button variant="secondary" onClick={openTransfer} disabled={accounts.length < 2}>
+          <ArrowLeftRight size={16} /> Перевод между счетами
+        </Button>
         <Button variant="secondary" onClick={onExportCsv} disabled={filtered.length === 0}>
           <Download size={16} /> Экспорт в CSV
         </Button>
@@ -286,6 +369,82 @@ export default function TransactionsPage() {
           <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-card border border-line bg-paper px-3 py-1.5 text-sm" />
         </div>
       </Card>
+
+      {transferMode && (
+        <Card className="animate-in mt-4">
+          <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
+            <ArrowLeftRight size={18} className="text-ink/40" /> Перевод между счетами
+          </h2>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs text-ink/50">Дата</label>
+              <input
+                type="date"
+                value={transferForm.date}
+                onChange={(e) => setTransferForm((f) => ({ ...f, date: e.target.value }))}
+                className="w-full rounded-card border border-line bg-paper px-3 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-ink/50">Сумма перевода</label>
+              <input
+                type="number"
+                step="0.01"
+                value={transferForm.amount}
+                onChange={(e) => setTransferForm((f) => ({ ...f, amount: e.target.value }))}
+                className="w-full rounded-card border border-line bg-paper px-3 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-ink/50">Со счёта</label>
+              <select
+                value={transferForm.fromAccountId}
+                onChange={(e) => setTransferForm((f) => ({ ...f, fromAccountId: e.target.value }))}
+                className="w-full rounded-card border border-line bg-paper px-3 py-1.5 text-sm"
+              >
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-ink/50">На счёт</label>
+              <select
+                value={transferForm.toAccountId}
+                onChange={(e) => setTransferForm((f) => ({ ...f, toAccountId: e.target.value }))}
+                className="w-full rounded-card border border-line bg-paper px-3 py-1.5 text-sm"
+              >
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-xs text-ink/50">Описание</label>
+              <input
+                value={transferForm.description}
+                onChange={(e) => setTransferForm((f) => ({ ...f, description: e.target.value }))}
+                className="w-full rounded-card border border-line bg-paper px-3 py-1.5 text-sm"
+              />
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-ink/50">
+            Создаст две связанные операции: расход на счёте списания и доход на счёте зачисления.
+          </p>
+          <div className="mt-3 flex gap-2">
+            <Button onClick={onSaveTransfer} disabled={transferSaving}>
+              {transferSaving ? 'Сохраняем…' : 'Сохранить перевод'}
+            </Button>
+            <Button variant="secondary" onClick={() => setTransferMode(false)}>
+              Отмена
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {editingId && (
         <Card className="animate-in mt-4">

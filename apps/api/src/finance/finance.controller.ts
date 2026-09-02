@@ -100,6 +100,16 @@ export class FinanceController {
     return this.analytics.getSpendingHeatmap(userId, familySpaceId, startDate, endDate);
   }
 
+  @Get('analytics/transfers')
+  getTransferSummary(
+    @CurrentUser() userId: string,
+    @FamilySpaceId() familySpaceId: string,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+  ) {
+    return this.analytics.getTransferSummary(userId, familySpaceId, startDate, endDate);
+  }
+
   @Get('budgets/:budgetId/status')
   getBudgetStatus(
     @CurrentUser() userId: string,

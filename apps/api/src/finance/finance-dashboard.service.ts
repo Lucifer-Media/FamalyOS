@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { PermissionsService } from '../common/permissions.service';
+import { isActualTransaction } from './finance-analytics.service';
 
 export interface DashboardData {
   totalBalance: number;
@@ -69,6 +70,7 @@ export class FinanceDashboardService {
 
     for (const tx of transactions) {
       const a = tx.attributes as Record<string, unknown>;
+      if (!isActualTransaction(a)) continue; // плановые операции — не факт
       const date = String(a.date ?? '');
       if (!date) continue;
       const amount = Number(a.amount) || 0;
@@ -138,6 +140,7 @@ export class FinanceDashboardService {
       if (linkedCategoryId) {
         for (const tx of transactions) {
           const txAttrs = tx.attributes as Record<string, unknown>;
+          if (!isActualTransaction(txAttrs)) continue;
           if (txAttrs.categoryId === linkedCategoryId) {
             const amount = Number(txAttrs.amount) || 0;
             if (amount > 0) currentAmount += amount;

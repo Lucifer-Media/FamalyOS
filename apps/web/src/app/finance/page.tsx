@@ -9,6 +9,7 @@ import { DynamicEntityForm } from '@/components/dynamic-entity-form';
 import { FinanceSubNav } from '@/components/finance-subnav';
 import { BankAvatar } from '@/components/bank-avatar';
 import PersonSelect, { usePeople } from '@/components/ui/person-select';
+import ArchiveAccountDialog from '@/components/archive-account-dialog';
 import { apiFetch, ApiError } from '@/lib/api';
 import { Button, Card, ErrorText, Badge } from '@/components/ui';
 import { toast } from 'sonner';
@@ -46,6 +47,7 @@ export default function FinancePage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [ownerPersonId, setOwnerPersonId] = useState<string | undefined>(undefined);
   const people = usePeople();
+  const [archivingAccount, setArchivingAccount] = useState<AccountSummary | null>(null);
 
   async function load() {
     const [active, archived, bankList] = await Promise.all([
@@ -82,14 +84,19 @@ export default function FinancePage() {
   async function onToggleArchive(acc: AccountSummary, e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
+    if (acc.status !== 'ARCHIVED') {
+      // Архивирование — сначала спрашиваем про операции на счёте (см. ArchiveAccountDialog),
+      // не архивируем счёт молча, оставляя операции "висеть" активными.
+      setArchivingAccount(acc);
+      return;
+    }
     setBusyId(acc.id);
     try {
-      const nextAction = acc.status === 'ARCHIVED' ? 'unarchive' : 'archive';
-      await apiFetch(`/entities/${acc.id}/${nextAction}`, { method: 'PATCH' });
-      toast.success(nextAction === 'archive' ? 'Счёт архивирован' : 'Счёт восстановлен из архива');
+      await apiFetch(`/entities/${acc.id}/unarchive`, { method: 'PATCH' });
+      toast.success('Счёт восстановлен из архива');
       await load();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Не удалось изменить статус счёта');
+      toast.error(err instanceof ApiError ? err.message : 'Не удалось восстановить счёт');
     } finally {
       setBusyId(null);
     }
@@ -132,6 +139,19 @@ export default function FinancePage() {
             </Button>
           </div>
         </Card>
+      )}
+
+      {archivingAccount && (
+        <ArchiveAccountDialog
+          accountId={archivingAccount.id}
+          accountTitle={archivingAccount.title}
+          otherAccounts={accounts.filter((a) => a.id !== archivingAccount.id && a.status !== 'ARCHIVED')}
+          onCancel={() => setArchivingAccount(null)}
+          onDone={() => {
+            setArchivingAccount(null);
+            load();
+          }}
+        />
       )}
 
       <div className="mt-6 flex items-center justify-between">

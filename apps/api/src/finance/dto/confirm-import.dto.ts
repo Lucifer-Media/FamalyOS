@@ -12,6 +12,7 @@ export class ConfirmImportDto {
     description: string;
     counterparty?: string;
     category?: string;
+    categoryId?: string;
     externalId: string;
     sourceFormat: string;
   }[];

@@ -34,6 +34,21 @@ export interface HeatmapDay {
   expense: number;
 }
 
+export interface TransferAccountPair {
+  fromAccountId: string;
+  fromAccountName: string;
+  toAccountId: string;
+  toAccountName: string;
+  amount: number;
+  count: number;
+}
+
+export interface TransferSummary {
+  totalVolume: number;
+  totalCount: number;
+  byAccountPair: TransferAccountPair[];
+}
+
 export interface CategoryAnalytics {
   category: string;
   income: number;
@@ -326,5 +341,85 @@ export class FinanceAnalyticsService {
       cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
     return days;
+  }
+
+  /**
+   * Статистика переводов между своими счетами — пункт "Статистика
+   * переводов между счетами" из расширенной аналитики. Переводы уже
+   * связываются парой через relatedTransactionId (и при импорте выписки,
+   * и вручную — см. страницу «Транзакции»). Здесь просто агрегируем уже
+   * связанные пары: сколько денег и сколько раз "перетекло" между какими
+   * счетами за период.
+   */
+  async getTransferSummary(userId: string, familySpaceId: string, startDate: string, endDate: string): Promise<TransferSummary> {
+    const membership = await this.permissions.getMembership(userId, familySpaceId);
+    await this.permissions.assertCan(membership, 'FINANCE', 'VIEW');
+
+    const [transactions, accounts] = await Promise.all([
+      this.prisma.entity.findMany({
+        where: { familySpaceId, entityType: 'financial_transaction', status: 'ACTIVE' },
+        select: { id: true, attributes: true },
+      }),
+      this.prisma.entity.findMany({ where: { familySpaceId, entityType: 'bank_account' }, select: { id: true, title: true } }),
+    ]);
+    const accountTitleById = new Map<string, string>(accounts.map((a: { id: string; title: string }) => [a.id, a.title]));
+    const byId = new Map<string, Record<string, unknown>>(transactions.map((t: { id: string; attributes: unknown }) => [t.id, t.attributes as Record<string, unknown>]));
+
+    const pairKeySeen = new Set<string>();
+    const byAccountPair = new Map<string, { fromAccountId: string; toAccountId: string; amount: number; count: number }>();
+    let totalVolume = 0;
+    let totalCount = 0;
+
+    for (const tx of transactions) {
+      const attrs = tx.attributes as Record<string, unknown>;
+      if (attrs.transactionType !== 'TRANSFER') continue;
+      const relatedId = attrs.relatedTransactionId as string | undefined;
+      if (!relatedId) continue; // не связанный "перевод" без пары не считаем — не с чем сопоставить
+
+      // Каждая пара учитывается один раз: канонический порядок id, чтобы
+      // не посчитать один и тот же перевод дважды (с обеих сторон пары).
+      const pairKey = [tx.id, relatedId].sort().join('|');
+      if (pairKeySeen.has(pairKey)) continue;
+
+      const date = String(attrs.date ?? '');
+      if (!date || date < startDate || date > endDate) continue;
+
+      const related = byId.get(relatedId);
+      if (!related) continue; // пара ссылается на несуществующую/архивную операцию
+
+      pairKeySeen.add(pairKey);
+
+      const amount = Number(attrs.amount) || 0;
+      // Определяем направление по знаку суммы: расход — счёт-источник, доход — счёт-получатель.
+      const outgoing = amount < 0 ? attrs : related;
+      const incoming = amount < 0 ? related : attrs;
+      const fromAccountId = String(outgoing.accountId ?? '');
+      const toAccountId = String(incoming.accountId ?? '');
+      const volume = Math.abs(Number(outgoing.amount) || 0);
+
+      totalVolume += volume;
+      totalCount += 1;
+
+      const key = `${fromAccountId}→${toAccountId}`;
+      const entry = byAccountPair.get(key) ?? { fromAccountId, toAccountId, amount: 0, count: 0 };
+      entry.amount += volume;
+      entry.count += 1;
+      byAccountPair.set(key, entry);
+    }
+
+    return {
+      totalVolume: Math.round(totalVolume * 100) / 100,
+      totalCount,
+      byAccountPair: Array.from(byAccountPair.values())
+        .map((e) => ({
+          fromAccountId: e.fromAccountId,
+          fromAccountName: accountTitleById.get(e.fromAccountId) ?? 'Неизвестный счёт',
+          toAccountId: e.toAccountId,
+          toAccountName: accountTitleById.get(e.toAccountId) ?? 'Неизвестный счёт',
+          amount: Math.round(e.amount * 100) / 100,
+          count: e.count,
+        }))
+        .sort((a, b) => b.amount - a.amount),
+    };
   }
 }

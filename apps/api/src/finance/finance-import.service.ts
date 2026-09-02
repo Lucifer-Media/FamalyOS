@@ -5,10 +5,13 @@ import { AuditService } from '../audit/audit.service';
 import { EntitiesService } from '../entities/entities.service';
 import { parseBankStatementText, parseBankStatementRows, ParsedTransaction } from './bank-statement-parser';
 import { findReconciliationCandidates, ReconciliationTransaction, findTransferPairMatch } from './reconciliation';
+import { matchCategoryByName } from './category-matcher';
 
 export interface StagedTransaction extends ParsedTransaction {
   isDuplicate: boolean;
   existingTransactionId?: string;
+  /** Найденная по названию ссылка на справочник категорий — undefined, если не удалось сопоставить (см. category-matcher.ts). */
+  categoryId?: string;
 }
 
 @Injectable()
@@ -63,10 +66,24 @@ export class FinanceImportService {
       existing.map((e: { externalId: string; transactionEntityId: string }) => [e.externalId, e.transactionEntityId]),
     );
 
+    // Пытаемся сопоставить текстовую категорию из выписки со справочником —
+    // консервативно, только точное совпадение (см. category-matcher.ts).
+    // Не сопоставленное — не блокирует импорт, просто останется без
+    // категории, фронтенд подсветит это в предпросмотре.
+    const categories = await this.prisma.entity.findMany({
+      where: { familySpaceId, entityType: 'financial_category' },
+      select: { id: true, attributes: true },
+    });
+    const categoryOptions = categories.map((c: { id: string; attributes: unknown }) => ({
+      id: c.id,
+      name: String((c.attributes as Record<string, unknown>).name ?? ''),
+    }));
+
     const staged: StagedTransaction[] = result.transactions.map((t) => ({
       ...t,
       isDuplicate: existingByExternalId.has(t.externalId),
       existingTransactionId: existingByExternalId.get(t.externalId),
+      categoryId: matchCategoryByName(t.category, categoryOptions),
     }));
 
     await this.audit.log({
@@ -90,7 +107,7 @@ export class FinanceImportService {
     userId: string,
     familySpaceId: string,
     accountEntityId: string,
-    transactions: ParsedTransaction[],
+    transactions: (ParsedTransaction & { categoryId?: string })[],
   ): Promise<{ created: number; skippedDuplicates: number }> {
     const membership = await this.permissions.getMembership(userId, familySpaceId);
     await this.permissions.assertCan(membership, 'DOCUMENTS', 'CREATE');
@@ -123,6 +140,7 @@ export class FinanceImportService {
           accountId: accountEntityId,
           description: t.description,
           category: t.category,
+          categoryId: t.categoryId || undefined,
           counterparty: t.counterparty,
           transactionType: t.amount < 0 ? 'EXPENSE' : 'INCOME',
           source: 'IMPORT',

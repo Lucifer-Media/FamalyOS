@@ -31,6 +31,21 @@ interface HeatmapDay {
   expense: number;
 }
 
+interface TransferAccountPair {
+  fromAccountId: string;
+  fromAccountName: string;
+  toAccountId: string;
+  toAccountName: string;
+  amount: number;
+  count: number;
+}
+
+interface TransferSummary {
+  totalVolume: number;
+  totalCount: number;
+  byAccountPair: TransferAccountPair[];
+}
+
 function monthStart(offsetMonths = 0): string {
   const d = new Date();
   d.setMonth(d.getMonth() + offsetMonths, 1);
@@ -47,19 +62,22 @@ export default function AnalyticsPage() {
   const [data, setData] = useState<CategoryAnalytics[]>([]);
   const [participants, setParticipants] = useState<ParticipantAnalytics[]>([]);
   const [heatmap, setHeatmap] = useState<HeatmapDay[]>([]);
+  const [transfers, setTransfers] = useState<TransferSummary | null>(null);
   const [error, setError] = useState('');
 
   async function load() {
     setError('');
     try {
-      const [byCategory, byParticipant, heatmapDays] = await Promise.all([
+      const [byCategory, byParticipant, heatmapDays, transferSummary] = await Promise.all([
         apiFetch<CategoryAnalytics[]>(`/finance/analytics/compare-previous?startDate=${startDate}&endDate=${endDate}`),
         apiFetch<ParticipantAnalytics[]>(`/finance/analytics/by-participant?startDate=${startDate}&endDate=${endDate}`),
         apiFetch<HeatmapDay[]>(`/finance/analytics/heatmap?startDate=${startDate}&endDate=${endDate}`),
+        apiFetch<TransferSummary>(`/finance/analytics/transfers?startDate=${startDate}&endDate=${endDate}`),
       ]);
       setData(byCategory);
       setParticipants(byParticipant);
       setHeatmap(heatmapDays);
+      setTransfers(transferSummary);
     } catch (e) {
       setError('Не удалось загрузить аналитику');
     }
@@ -162,6 +180,33 @@ export default function AnalyticsPage() {
           ))}
           {participants.length === 0 && <p className="py-2 text-sm text-ink/50">Нет операций за выбранный период.</p>}
         </div>
+      </Card>
+
+      <Card className="mt-4">
+        <h2 className="font-display text-lg font-semibold">Переводы между счетами</h2>
+        {transfers && transfers.totalCount > 0 ? (
+          <>
+            <p className="mt-1 text-sm text-ink/60">
+              Всего переведено <strong>{transfers.totalVolume.toLocaleString('ru-RU')} ₽</strong> за {transfers.totalCount}{' '}
+              {transfers.totalCount === 1 ? 'перевод' : 'переводов'}.
+            </p>
+            <div className="mt-2 divide-y divide-line">
+              {transfers.byAccountPair.map((p) => (
+                <div key={`${p.fromAccountId}-${p.toAccountId}`} className="flex items-center justify-between py-2 text-sm">
+                  <p className="text-ink">
+                    {p.fromAccountName} → {p.toAccountName}
+                  </p>
+                  <div className="text-right">
+                    <p className="text-ink">{p.amount.toLocaleString('ru-RU')} ₽</p>
+                    <p className="text-xs text-ink/40">{p.count} операций</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <p className="mt-2 text-sm text-ink/50">Переводов между своими счетами за выбранный период не найдено.</p>
+        )}
       </Card>
 
       <Card className="mt-4">
