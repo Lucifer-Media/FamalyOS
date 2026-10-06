@@ -10,52 +10,125 @@ export interface LlmFieldExtractionResult {
 }
 
 /**
- * Интеграция с локальной моделью через Ollama (обсуждалось отдельно —
- * реально протестировано на вашем ThinkPad: qwen3:8b, ~23 сек/запрос без
- * режима размышления, ~2 ядра CPU, ~6 ГБ RAM). Работает СТРОГО как
- * дополнение к regex-извлечению document-classifier.ts, а не замена:
+ * Интеграция с локальной LLM. Изначально протестировано с Ollama на вашем
+ * ThinkPad (qwen3:8b, ~23 сек/запрос без режима размышления, ~2 ядра CPU,
+ * ~6 ГБ RAM). Позже добавлена поддержка LM Studio (и вообще любого
+ * OpenAI-совместимого сервера — vLLM, llama.cpp server и т.п.) — у него
+ * другой формат запроса (`/v1/chat/completions` с `messages`, а не
+ * Ollama-шный `/api/generate` с одним `prompt`). Класс называется
+ * `OllamaService` по историческим причинам (не переименован, чтобы не
+ * трогать три места, где он используется — ai-chat.service.ts,
+ * ocr.processor.ts, ai-assistant.module.ts), но фактически теперь это
+ * универсальный клиент локальной LLM, провайдер выбирается через
+ * `LLM_PROVIDER`.
  *
- *   - если OLLAMA_URL не задан в окружении — сервис не делает НИ ОДНОГО
+ * Работает СТРОГО как дополнение к regex-извлечению document-classifier.ts,
+ * а не замена:
+ *   - если ни один URL не задан в окружении — сервис не делает НИ ОДНОГО
  *     сетевого вызова, весь конвейер OCR работает как раньше;
- *   - если Ollama недоступен/не ответил за разумное время — тихий откат,
+ *   - если сервер недоступен/не ответил за разумное время — тихий откат,
  *     без падения обработки документа;
  *   - предложенные LLM значения проходят ТОТ ЖЕ конвейер подтверждения
  *     пользователем, что и обычный regex-OCR — никогда не считаются
  *     истиной автоматически (тот же принцип, что для OCR в целом).
+ *
+ * Переменные окружения (у каждой есть старое имя `OLLAMA_*` как фолбэк —
+ * если у вас уже настроен Ollama через старые переменные, ничего менять
+ * не нужно):
+ *   - `LLM_PROVIDER` — 'ollama' (по умолчанию) | 'openai_compatible' (LM Studio и т.п.)
+ *   - `LLM_URL` (или `OLLAMA_URL`) — например `http://100.71.172.64:1234` для LM Studio
+ *   - `LLM_FALLBACK_URL` (или `OLLAMA_FALLBACK_URL`) — резервный адрес
+ *   - `LLM_MODEL` (или `OLLAMA_MODEL`) — например `qwen/qwen3.6-35b-a3b` для LM Studio
+ *   - `LLM_API_KEY` — опционально, Bearer-токен (LM Studio обычно не требует)
+ *   - `LLM_TIMEOUT_MS` (или `OLLAMA_TIMEOUT_MS`)
  */
+/**
+ * Возвращает первое непустое значение — используется вместо `??`, потому
+ * что Docker Compose при `${VAR:-}` передаёт в контейнер пустую строку
+ * `""` для незаданной переменной (а не отсутствие переменной вовсе), а
+ * `??` пустую строку не считает "нет значения" — фолбэк на старое имя
+ * переменной (`OLLAMA_URL` и т.п.) иначе молча переставал бы работать
+ * при любом упоминании новых `LLM_*` имён в docker-compose.yml.
+ */
+function firstNonEmpty(...values: (string | undefined)[]): string | undefined {
+  return values.find((v) => v !== undefined && v !== '');
+}
+
 @Injectable()
 export class OllamaService {
   private readonly logger = new Logger(OllamaService.name);
-  private readonly baseUrl = process.env.OLLAMA_URL; // например http://100.x.x.x:11434 (домашний ПК)
+  private readonly provider = (firstNonEmpty(process.env.LLM_PROVIDER) ?? 'ollama') as 'ollama' | 'openai_compatible';
+  private readonly baseUrl = firstNonEmpty(process.env.LLM_URL, process.env.OLLAMA_URL); // например http://100.x.x.x:11434 (Ollama) или http://100.x.x.x:1234 (LM Studio)
   // Резервный адрес — если основной (например, более мощный домашний ПК)
   // недоступен или не ответил вовремя, пробуем запасной (например, тот же
   // ThinkPad). Полностью опционально — если не задан, просто нет резерва.
-  private readonly fallbackUrl = process.env.OLLAMA_FALLBACK_URL;
-  private readonly model = process.env.OLLAMA_MODEL ?? 'qwen3:8b';
-  private readonly timeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS ?? 60000);
+  private readonly fallbackUrl = firstNonEmpty(process.env.LLM_FALLBACK_URL, process.env.OLLAMA_FALLBACK_URL);
+  private readonly model = firstNonEmpty(process.env.LLM_MODEL, process.env.OLLAMA_MODEL) ?? 'qwen3:8b';
+  private readonly apiKey = firstNonEmpty(process.env.LLM_API_KEY);
+  private readonly timeoutMs = Number(firstNonEmpty(process.env.LLM_TIMEOUT_MS, process.env.OLLAMA_TIMEOUT_MS) ?? 60000);
 
   isConfigured(): boolean {
     return Boolean(this.baseUrl);
   }
 
-  /** Пробует основной адрес, при неудаче — резервный (если задан). Один и
-   * тот же запрос отправляется без изменений, просто на другой хост. */
-  private async requestWithFallback(path: string, body: unknown): Promise<Response | null> {
+  /**
+   * Отправляет один запрос на генерацию (единый текстовый prompt — и для
+   * chat(), и для extractFields() этого достаточно, отдельная роль
+   * "system" не нужна). Пробует основной адрес, при неудаче — резервный
+   * (если задан). Формат запроса/ответа зависит от `this.provider`, но
+   * вызывающему коду об этом знать не нужно — на выходе всегда просто
+   * текст ответа или null.
+   */
+  private async generate(prompt: string, opts: { json?: boolean } = {}): Promise<string | null> {
     for (const url of [this.baseUrl, this.fallbackUrl].filter(Boolean) as string[]) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
       try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-        const response = await fetch(`${url}${path}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
+        const response =
+          this.provider === 'openai_compatible'
+            ? await fetch(`${url}/v1/chat/completions`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
+                },
+                body: JSON.stringify({
+                  model: this.model,
+                  messages: [{ role: 'user', content: prompt }],
+                  stream: false,
+                  ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
+                }),
+                signal: controller.signal,
+              })
+            : await fetch(`${url}/api/generate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  model: this.model,
+                  prompt,
+                  think: false, // без режима размышления — на порядок быстрее, рассуждения тут не нужны
+                  stream: false,
+                  ...(opts.json ? { format: 'json' } : {}),
+                }),
+                signal: controller.signal,
+              });
+
         clearTimeout(timer);
-        if (response.ok) return response;
-        this.logger.warn(`Ollama (${url}) ответил ${response.status}${url === this.baseUrl && this.fallbackUrl ? ' — пробуем резервный адрес' : ''}`);
+        if (!response.ok) {
+          this.logger.warn(`LLM (${url}) ответил ${response.status}${url === this.baseUrl && this.fallbackUrl ? ' — пробуем резервный адрес' : ''}`);
+          continue;
+        }
+
+        if (this.provider === 'openai_compatible') {
+          const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+          const text = data.choices?.[0]?.message?.content?.trim();
+          return text ?? null;
+        }
+        const data = (await response.json()) as { response?: string };
+        return data.response?.trim() ?? null;
       } catch (err) {
-        this.logger.warn(`Ollama (${url}) недоступен: ${(err as Error).message}${url === this.baseUrl && this.fallbackUrl ? ' — пробуем резервный адрес' : ''}`);
+        clearTimeout(timer);
+        this.logger.warn(`LLM (${url}) недоступен: ${(err as Error).message}${url === this.baseUrl && this.fallbackUrl ? ' — пробуем резервный адрес' : ''}`);
       }
     }
     return null;
@@ -93,10 +166,7 @@ export class OllamaService {
       'Ответ:',
     ].join('\n');
 
-    const response = await this.requestWithFallback('/api/generate', { model: this.model, prompt, think: false, stream: false });
-    if (!response) return null;
-    const data = (await response.json()) as { response?: string };
-    return data.response?.trim() ?? null;
+    return this.generate(prompt);
   }
 
   /**
@@ -120,20 +190,11 @@ export class OllamaService {
     }
 
     const prompt = buildExtractionPrompt(entityType, fields, ocrText);
-
-    const response = await this.requestWithFallback('/api/generate', {
-      model: this.model,
-      prompt,
-      think: false, // без режима размышления — на порядок быстрее, для извлечения полей рассуждения не нужны
-      stream: false,
-      format: 'json',
-    });
-    if (!response) {
+    const text = await this.generate(prompt, { json: true });
+    if (text === null) {
       return { attributes: {}, fieldConfidence: {}, unavailable: true };
     }
-
-    const data = (await response.json()) as { response?: string };
-    return parseExtractionResponse(data.response ?? '', fields);
+    return parseExtractionResponse(text, fields);
   }
 }
 

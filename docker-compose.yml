@@ -66,10 +66,22 @@ services:
       FILE_STORAGE_ROOT: /app/uploads
       PORT: 3001
       CORS_ORIGIN: ${CORS_ORIGIN:-http://192.168.1.18:3400}
-      # Локальная LLM (Ollama) работает на хосте, не в Docker — контейнеру нужен
-      # доступ к хост-машине. OLLAMA_URL не задан по умолчанию: без него весь
-      # AI-функционал (чат, доп. извлечение полей) отключается автоматически,
-      # остальной конвейер продолжает работать как раньше.
+      # Локальная LLM работает на хосте (или в отдельной сети, например
+      # LM Studio на другом ПК через Tailscale), не в Docker — контейнеру
+      # нужен доступ к хост-машине/сети. Ни одна переменная не задана по
+      # умолчанию: без них весь AI-функционал (чат, доп. извлечение полей)
+      # отключается автоматически, остальной конвейер продолжает работать
+      # как раньше. Поддерживаются два формата API — Ollama (LLM_PROVIDER=ollama,
+      # по умолчанию) и любой OpenAI-совместимый сервер, включая LM Studio
+      # (LLM_PROVIDER=openai_compatible) — см. apps/api/src/ai-assistant/ollama.service.ts.
+      # Старые переменные OLLAMA_URL/OLLAMA_MODEL остаются рабочими как есть — это
+      # просто более общие имена для той же настройки.
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_URL: ${LLM_URL:-}
+      LLM_FALLBACK_URL: ${LLM_FALLBACK_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-}
       OLLAMA_URL: ${OLLAMA_URL:-}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
     extra_hosts:
