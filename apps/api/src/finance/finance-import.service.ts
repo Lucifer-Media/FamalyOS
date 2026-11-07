@@ -6,12 +6,17 @@ import { EntitiesService } from '../entities/entities.service';
 import { parseBankStatementText, parseBankStatementRows, ParsedTransaction } from './bank-statement-parser';
 import { findReconciliationCandidates, ReconciliationTransaction, findTransferPairMatch } from './reconciliation';
 import { matchCategoryByName } from './category-matcher';
+import { applyRules, normalizeRule, FinanceRule, RuleChanges } from './finance-rules';
 
 export interface StagedTransaction extends ParsedTransaction {
   isDuplicate: boolean;
   existingTransactionId?: string;
   /** Найденная по названию ссылка на справочник категорий — undefined, если не удалось сопоставить (см. category-matcher.ts). */
   categoryId?: string;
+  /** Итерация 4: что предложили правила автокатегоризации (тип расхода, тип операции, контрагент). */
+  scope?: 'PERSONAL' | 'FAMILY';
+  transactionType?: 'EXPENSE' | 'INCOME' | 'TRANSFER';
+  appliedRules?: string[];
 }
 
 @Injectable()
@@ -62,8 +67,14 @@ export class FinanceImportService {
     const existing = await this.prisma.financialTransactionExternalId.findMany({
       where: { accountEntityId, externalId: { in: externalIds } },
     });
+    // Итерация 4: ключ дедупликации, указывающий на АРХИВНУЮ операцию (например,
+    // тестовые данные убраны через «Очистку»), больше не считается дублем —
+    // иначе ту же выписку нельзя было бы импортировать заново как реальную.
+    const activeIds = await this.activeTransactionIds(existing.map((e: { transactionEntityId: string }) => e.transactionEntityId));
     const existingByExternalId = new Map<string, string>(
-      existing.map((e: { externalId: string; transactionEntityId: string }) => [e.externalId, e.transactionEntityId]),
+      existing
+        .filter((e: { transactionEntityId: string }) => activeIds.has(e.transactionEntityId))
+        .map((e: { externalId: string; transactionEntityId: string }) => [e.externalId, e.transactionEntityId]),
     );
 
     // Пытаемся сопоставить текстовую категорию из выписки со справочником —
@@ -79,12 +90,23 @@ export class FinanceImportService {
       name: String((c.attributes as Record<string, unknown>).name ?? ''),
     }));
 
-    const staged: StagedTransaction[] = result.transactions.map((t) => ({
-      ...t,
-      isDuplicate: existingByExternalId.has(t.externalId),
-      existingTransactionId: existingByExternalId.get(t.externalId),
-      categoryId: matchCategoryByName(t.category, categoryOptions),
-    }));
+    const rules = await this.loadRules(familySpaceId);
+    const staged: StagedTransaction[] = result.transactions.map((t) => {
+      const byName = matchCategoryByName(t.category, categoryOptions);
+      // Правила дополняют точное совпадение по названию: если по названию
+      // категория нашлась — она приоритетнее (onlyEmpty), иначе — из правила.
+      const ruled = this.ruleChangesFor(rules, { ...t, accountId: accountEntityId, categoryId: byName });
+      return {
+        ...t,
+        isDuplicate: existingByExternalId.has(t.externalId),
+        existingTransactionId: existingByExternalId.get(t.externalId),
+        categoryId: byName ?? ruled.changes.categoryId,
+        scope: ruled.changes.scope,
+        transactionType: ruled.changes.transactionType,
+        counterparty: ruled.changes.counterparty ?? t.counterparty,
+        appliedRules: ruled.names.length ? ruled.names : undefined,
+      };
+    });
 
     await this.audit.log({
       familySpaceId,
@@ -107,7 +129,7 @@ export class FinanceImportService {
     userId: string,
     familySpaceId: string,
     accountEntityId: string,
-    transactions: (ParsedTransaction & { categoryId?: string })[],
+    transactions: (ParsedTransaction & { categoryId?: string; scope?: string; transactionType?: string })[],
   ): Promise<{ created: number; skippedDuplicates: number }> {
     const membership = await this.permissions.getMembership(userId, familySpaceId);
     await this.permissions.assertCan(membership, 'DOCUMENTS', 'CREATE');
@@ -117,6 +139,7 @@ export class FinanceImportService {
       throw new BadRequestException('Счёт не найден в этом пространстве');
     }
 
+    const rules = await this.loadRules(familySpaceId);
     let created = 0;
     let skippedDuplicates = 0;
     const createdEntities: { id: string; date: string; amount: number; description: string }[] = [];
@@ -125,10 +148,20 @@ export class FinanceImportService {
       const existing = await this.prisma.financialTransactionExternalId.findUnique({
         where: { accountEntityId_externalId: { accountEntityId, externalId: t.externalId } },
       });
-      if (existing) {
+      if (existing && (await this.activeTransactionIds([existing.transactionEntityId])).has(existing.transactionEntityId)) {
         skippedDuplicates++;
         continue;
       }
+
+      // Правила применяются и на сервере — на случай, если клиент прислал
+      // строки без предпросмотра. То, что пришло от пользователя, приоритетнее.
+      const ruled = this.ruleChangesFor(rules, { ...t, accountId: accountEntityId });
+      const categoryId = t.categoryId || ruled.changes.categoryId;
+      const scope = t.scope === 'PERSONAL' || t.scope === 'FAMILY' ? t.scope : ruled.changes.scope;
+      const transactionType =
+        t.transactionType === 'EXPENSE' || t.transactionType === 'INCOME' || t.transactionType === 'TRANSFER'
+          ? t.transactionType
+          : ruled.changes.transactionType ?? (t.amount < 0 ? 'EXPENSE' : 'INCOME');
 
       const entity = await this.entities.create(userId, familySpaceId, {
         entityType: 'financial_transaction',
@@ -140,18 +173,27 @@ export class FinanceImportService {
           accountId: accountEntityId,
           description: t.description,
           category: t.category,
-          categoryId: t.categoryId || undefined,
-          counterparty: t.counterparty,
-          transactionType: t.amount < 0 ? 'EXPENSE' : 'INCOME',
+          categoryId: categoryId || undefined,
+          scope: scope || undefined,
+          counterparty: ruled.changes.counterparty ?? t.counterparty,
+          transactionType,
           source: 'IMPORT',
           externalId: t.externalId,
         },
-        changeSummary: `Импортировано из выписки (${t.sourceFormat})`,
+        changeSummary: `Импортировано из выписки (${t.sourceFormat})${ruled.names.length ? `; правила: ${ruled.names.join(', ')}` : ''}`,
       });
 
-      await this.prisma.financialTransactionExternalId.create({
-        data: { familySpaceId, accountEntityId, externalId: t.externalId, transactionEntityId: entity.id },
-      });
+      if (existing) {
+        // Ключ раньше указывал на архивную операцию — перенаправляем его на новую.
+        await this.prisma.financialTransactionExternalId.update({
+          where: { accountEntityId_externalId: { accountEntityId, externalId: t.externalId } },
+          data: { transactionEntityId: entity.id },
+        });
+      } else {
+        await this.prisma.financialTransactionExternalId.create({
+          data: { familySpaceId, accountEntityId, externalId: t.externalId, transactionEntityId: entity.id },
+        });
+      }
       created++;
       createdEntities.push({ id: entity.id, date: t.date, amount: t.amount, description: t.description });
     }
@@ -177,6 +219,33 @@ export class FinanceImportService {
     });
 
     return { created, skippedDuplicates };
+  }
+
+  private async activeTransactionIds(ids: string[]): Promise<Set<string>> {
+    if (ids.length === 0) return new Set();
+    const rows = await this.prisma.entity.findMany({ where: { id: { in: ids }, status: 'ACTIVE' }, select: { id: true } });
+    return new Set((rows as { id: string }[]).map((r) => r.id));
+  }
+
+  private async loadRules(familySpaceId: string): Promise<FinanceRule[]> {
+    const rows = await this.prisma.entity.findMany({
+      where: { familySpaceId, entityType: 'finance_rule', status: 'ACTIVE' },
+      select: { id: true, attributes: true },
+    });
+    return ((rows ?? []) as { id: string; attributes: unknown }[]).map((r) => normalizeRule(r.id, (r.attributes ?? {}) as Record<string, unknown>));
+  }
+
+  private ruleChangesFor(
+    rules: FinanceRule[],
+    t: { description?: string; counterparty?: string; amount: number; category?: string; accountId: string; categoryId?: string },
+  ): { changes: RuleChanges; names: string[] } {
+    if (rules.length === 0) return { changes: {}, names: [] };
+    const res = applyRules(
+      { description: t.description, counterparty: t.counterparty, amount: t.amount, category: t.category, accountId: t.accountId, categoryId: t.categoryId, transactionType: t.amount < 0 ? 'EXPENSE' : 'INCOME' },
+      rules,
+      { onlyEmpty: true },
+    );
+    return { changes: res.changes, names: res.matchedRuleNames };
   }
 
   /**

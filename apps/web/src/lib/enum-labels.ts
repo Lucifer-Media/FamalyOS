@@ -96,6 +96,21 @@ export const ENUM_LABELS_RU: Record<string, string> = {
   NORMAL: 'Обычный',
   CONFIDENTIAL: 'Конфиденциальный',
   STRICTLY_CONFIDENTIAL: 'Строго конфиденциальный',
+
+  // Итерация 4: копилки, правила, отчёты
+  COMPLETED: 'Выполнена',
+  PAUSED: 'На паузе',
+  CONTRIBUTIONS: 'По пополнениям',
+  ACCOUNT_BALANCE: 'По балансу счёта',
+  ALL: 'Все условия',
+  ANY: 'Любое условие',
+  AI_SUGGESTION: 'Подсказка ИИ',
+  FROM_TRANSACTION: 'Из операции',
+  GENERATING: 'Формируется',
+  READY: 'Готов',
+  FAILED: 'Ошибка',
+  AI: 'ИИ',
+  TEMPLATE: 'Шаблон',
 };
 
 export function enumLabel(value: string): string {

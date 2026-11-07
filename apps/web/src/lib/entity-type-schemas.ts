@@ -63,7 +63,7 @@ export const DOCUMENT_TYPE_GROUPS: { title: string; types: string[] }[] = [
   },
   {
     title: 'Финансы',
-    types: ['bank', 'bank_account', 'financial_transaction', 'budget', 'financial_category', 'financial_goal', 'financial_need'],
+    types: ['bank', 'bank_account', 'financial_transaction', 'budget', 'financial_category', 'financial_goal', 'financial_need', 'financial_goal_contribution', 'finance_rule', 'finance_report'],
   },
   {
     title: 'ЖКХ',

@@ -13,6 +13,9 @@ export class ConfirmImportDto {
     counterparty?: string;
     category?: string;
     categoryId?: string;
+    /** Итерация 4: предложено правилами в предпросмотре. */
+    scope?: string;
+    transactionType?: string;
     externalId: string;
     sourceFormat: string;
   }[];

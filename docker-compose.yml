@@ -79,6 +79,12 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       LLM_URL: ${LLM_URL:-}
       LLM_FALLBACK_URL: ${LLM_FALLBACK_URL:-}
+      # Итерация 4: у резервного адреса — свой тип API и своя модель
+      # (типично: основной — LM Studio на ПК, резерв — Ollama на этом ноутбуке).
+      LLM_FALLBACK_PROVIDER: ${LLM_FALLBACK_PROVIDER:-}
+      LLM_FALLBACK_MODEL: ${LLM_FALLBACK_MODEL:-}
+      # Таймаут генерации финансового отчёта (мс) — на CPU ноутбука это минуты.
+      LLM_REPORT_TIMEOUT_MS: ${LLM_REPORT_TIMEOUT_MS:-300000}
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-}

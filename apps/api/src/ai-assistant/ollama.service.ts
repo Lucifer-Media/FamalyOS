@@ -54,16 +54,50 @@ function firstNonEmpty(...values: (string | undefined)[]): string | undefined {
   return values.find((v) => v !== undefined && v !== '');
 }
 
+export type LlmProvider = 'ollama' | 'openai_compatible';
+
+/** Один адрес LLM в цепочке (основной → резервный). У каждого — свой тип API и модель. */
+export interface LlmEndpoint {
+  role: 'primary' | 'fallback';
+  url: string;
+  provider: LlmProvider;
+  model: string;
+}
+
+export interface LlmCompletion {
+  text: string;
+  endpoint: LlmEndpoint;
+  durationMs: number;
+}
+
+export interface LlmEndpointStatus extends LlmEndpoint {
+  reachable: boolean;
+  latencyMs: number | null;
+  /** Модель есть в списке моделей сервера (null — сервер список не вернул). */
+  modelAvailable: boolean | null;
+  error?: string;
+}
+
+/** Qwen3 и другие «думающие» модели через OpenAI-совместимый API могут вернуть блок <think>…</think> — пользователю он не нужен. */
+export function stripThinking(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+}
+
 @Injectable()
 export class OllamaService {
   private readonly logger = new Logger(OllamaService.name);
-  private readonly provider = (firstNonEmpty(process.env.LLM_PROVIDER) ?? 'ollama') as 'ollama' | 'openai_compatible';
+  private readonly provider = (firstNonEmpty(process.env.LLM_PROVIDER) ?? 'ollama') as LlmProvider;
   private readonly baseUrl = firstNonEmpty(process.env.LLM_URL, process.env.OLLAMA_URL); // например http://100.x.x.x:11434 (Ollama) или http://100.x.x.x:1234 (LM Studio)
   // Резервный адрес — если основной (например, более мощный домашний ПК)
   // недоступен или не ответил вовремя, пробуем запасной (например, тот же
   // ThinkPad). Полностью опционально — если не задан, просто нет резерва.
+  // Итерация 4: у резервного адреса может быть СВОЙ тип API и СВОЯ модель
+  // (LLM_FALLBACK_PROVIDER / LLM_FALLBACK_MODEL) — типичная схема «LM Studio
+  // на ПК → Ollama на ноутбуке». Если не заданы — как раньше, наследуются от основного.
   private readonly fallbackUrl = firstNonEmpty(process.env.LLM_FALLBACK_URL, process.env.OLLAMA_FALLBACK_URL);
+  private readonly fallbackProvider = (firstNonEmpty(process.env.LLM_FALLBACK_PROVIDER) ?? this.provider) as LlmProvider;
   private readonly model = firstNonEmpty(process.env.LLM_MODEL, process.env.OLLAMA_MODEL) ?? 'qwen3:8b';
+  private readonly fallbackModel = firstNonEmpty(process.env.LLM_FALLBACK_MODEL) ?? this.model;
   private readonly apiKey = firstNonEmpty(process.env.LLM_API_KEY);
   private readonly timeoutMs = Number(firstNonEmpty(process.env.LLM_TIMEOUT_MS, process.env.OLLAMA_TIMEOUT_MS) ?? 60000);
 
@@ -71,40 +105,48 @@ export class OllamaService {
     return Boolean(this.baseUrl);
   }
 
+  /** Цепочка адресов в порядке попыток. */
+  endpoints(): LlmEndpoint[] {
+    const list: LlmEndpoint[] = [];
+    if (this.baseUrl) list.push({ role: 'primary', url: this.baseUrl, provider: this.provider, model: this.model });
+    if (this.fallbackUrl) list.push({ role: 'fallback', url: this.fallbackUrl, provider: this.fallbackProvider, model: this.fallbackModel });
+    return list;
+  }
+
   /**
-   * Отправляет один запрос на генерацию (единый текстовый prompt — и для
-   * chat(), и для extractFields() этого достаточно, отдельная роль
-   * "system" не нужна). Пробует основной адрес, при неудаче — резервный
-   * (если задан). Формат запроса/ответа зависит от `this.provider`, но
-   * вызывающему коду об этом знать не нужно — на выходе всегда просто
-   * текст ответа или null.
+   * Отправляет один запрос на генерацию. Пробует адреса по цепочке; на выходе —
+   * текст и то, КАКАЯ модель ответила (показывается в отчётах). null — никто не ответил.
    */
-  private async generate(prompt: string, opts: { json?: boolean } = {}): Promise<string | null> {
-    for (const url of [this.baseUrl, this.fallbackUrl].filter(Boolean) as string[]) {
+  async complete(prompt: string, opts: { json?: boolean; timeoutMs?: number } = {}): Promise<LlmCompletion | null> {
+    const chain = this.endpoints();
+    for (let i = 0; i < chain.length; i++) {
+      const ep = chain[i];
+      const hasNext = i < chain.length - 1;
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      const started = Date.now();
+      const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? this.timeoutMs);
       try {
         const response =
-          this.provider === 'openai_compatible'
-            ? await fetch(`${url}/v1/chat/completions`, {
+          ep.provider === 'openai_compatible'
+            ? await fetch(`${ep.url}/v1/chat/completions`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
                   ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
                 },
                 body: JSON.stringify({
-                  model: this.model,
+                  model: ep.model,
                   messages: [{ role: 'user', content: prompt }],
                   stream: false,
                   ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
                 }),
                 signal: controller.signal,
               })
-            : await fetch(`${url}/api/generate`, {
+            : await fetch(`${ep.url}/api/generate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  model: this.model,
+                  model: ep.model,
                   prompt,
                   think: false, // без режима размышления — на порядок быстрее, рассуждения тут не нужны
                   stream: false,
@@ -115,23 +157,67 @@ export class OllamaService {
 
         clearTimeout(timer);
         if (!response.ok) {
-          this.logger.warn(`LLM (${url}) ответил ${response.status}${url === this.baseUrl && this.fallbackUrl ? ' — пробуем резервный адрес' : ''}`);
+          this.logger.warn(`LLM (${ep.url}) ответил ${response.status}${hasNext ? ' — пробуем резервный адрес' : ''}`);
           continue;
         }
 
-        if (this.provider === 'openai_compatible') {
+        let text: string | undefined;
+        if (ep.provider === 'openai_compatible') {
           const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
-          const text = data.choices?.[0]?.message?.content?.trim();
-          return text ?? null;
+          text = data.choices?.[0]?.message?.content;
+        } else {
+          const data = (await response.json()) as { response?: string };
+          text = data.response;
         }
-        const data = (await response.json()) as { response?: string };
-        return data.response?.trim() ?? null;
+        if (text === undefined || text === null) return null;
+        return { text: stripThinking(text), endpoint: ep, durationMs: Date.now() - started };
       } catch (err) {
         clearTimeout(timer);
-        this.logger.warn(`LLM (${url}) недоступен: ${(err as Error).message}${url === this.baseUrl && this.fallbackUrl ? ' — пробуем резервный адрес' : ''}`);
+        this.logger.warn(`LLM (${ep.url}) недоступен: ${(err as Error).message}${hasNext ? ' — пробуем резервный адрес' : ''}`);
       }
     }
     return null;
+  }
+
+  /** Совместимость со старым кодом (chat/extractFields): только текст. */
+  private async generate(prompt: string, opts: { json?: boolean } = {}): Promise<string | null> {
+    const result = await this.complete(prompt, opts);
+    return result ? result.text : null;
+  }
+
+  /** Проверка доступности каждого адреса цепочки (экран «Статус ИИ»). Ничего не генерирует. */
+  async status(): Promise<LlmEndpointStatus[]> {
+    return Promise.all(
+      this.endpoints().map(async (ep) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const started = Date.now();
+        try {
+          const res = await fetch(ep.provider === 'openai_compatible' ? `${ep.url}/v1/models` : `${ep.url}/api/tags`, {
+            headers: this.apiKey && ep.provider === 'openai_compatible' ? { Authorization: `Bearer ${this.apiKey}` } : {},
+            signal: controller.signal,
+          });
+          clearTimeout(timer);
+          const latencyMs = Date.now() - started;
+          if (!res.ok) return { ...ep, reachable: false, latencyMs, modelAvailable: null, error: `HTTP ${res.status}` };
+          let modelAvailable: boolean | null = null;
+          try {
+            const data = (await res.json()) as { models?: { name?: string; model?: string }[]; data?: { id?: string }[] };
+            const names =
+              ep.provider === 'openai_compatible'
+                ? (data.data ?? []).map((m) => m.id ?? '')
+                : (data.models ?? []).map((m) => m.name ?? m.model ?? '');
+            if (names.length) modelAvailable = names.some((n) => n === ep.model || n.startsWith(ep.model + ':') || ep.model.startsWith(n));
+          } catch {
+            modelAvailable = null;
+          }
+          return { ...ep, reachable: true, latencyMs, modelAvailable };
+        } catch (err) {
+          clearTimeout(timer);
+          return { ...ep, reachable: false, latencyMs: null, modelAvailable: null, error: (err as Error).message };
+        }
+      }),
+    );
   }
 
   /**

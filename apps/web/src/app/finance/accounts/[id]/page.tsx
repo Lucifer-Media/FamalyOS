@@ -79,6 +79,9 @@ interface StagedTransaction {
   externalId: string;
   sourceFormat: string;
   isDuplicate: boolean;
+  scope?: string;
+  transactionType?: string;
+  appliedRules?: string[];
 }
 
 interface TransactionFormState {
@@ -555,7 +558,11 @@ export default function AccountDetailPage() {
                         </td>
                         <td className="py-1 pr-2 truncate">{t.description}</td>
                         <td className="py-1 pr-2 whitespace-nowrap">
-                          {t.categoryId ? (
+                          {t.appliedRules?.length ? (
+                            <span title={`Сработали правила: ${t.appliedRules.join(', ')}`}>
+                              <Badge tone="moss">правило: {t.appliedRules[0]}</Badge>
+                            </span>
+                          ) : t.categoryId ? (
                             <span className="text-ink/60">{t.category}</span>
                           ) : t.category ? (
                             <span title="Не удалось сопоставить со справочником категорий — импортируется без категории, выберите вручную после импорта">

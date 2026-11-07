@@ -109,8 +109,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      <div className="md:pl-60">
-        <div className="hidden items-center gap-3 border-b border-line bg-paper-card px-6 py-3 md:flex">
+      <div className="md:pl-60 print:pl-0">
+        <div className="hidden items-center gap-3 border-b border-line bg-paper-card px-6 py-3 md:flex print:hidden">
           <form onSubmit={onSearchSubmit} className="relative w-full max-w-md">
             <Search size={16} className="pointer-events-none absolute left-3 top-2.5 text-ink/40" />
             <input

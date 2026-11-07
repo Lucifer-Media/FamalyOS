@@ -96,3 +96,26 @@
 | Метод | Путь | Описание |
 |---|---|---|
 | GET | `/health` | Проверка доступности + реального подключения к БД |
+
+## Finance — Итерация 4 (правила, подписки, копилки, очистка, ИИ)
+
+Все эндпоинты требуют JWT и `X-Family-Space-Id`; права — ресурс `FINANCE`. CRUD/архив/версии самих записей (`finance_rule`, `financial_goal`, `financial_goal_contribution`, `financial_need`, `finance_report`) — через общий `/entities`.
+
+| Метод | Путь | Право | Что делает |
+|---|---|---|---|
+| POST | `/finance/rules` | CREATE/EDIT | Создать/изменить правило `{id?, attributes:{name, conditions:[{field,op,value}], matchMode, set*}}` с проверкой условий |
+| POST | `/finance/rules/apply` | VIEW (dryRun) / EDIT | `{dryRun=true, ruleIds?, draftRule?, onlyEmpty=true}` — предпросмотр или применение к существующим операциям |
+| GET | `/finance/recurring/candidates` | VIEW | Найденные регулярные платежи/подписки |
+| GET | `/finance/recurring/status?month=YYYY-MM` | VIEW | Обязательные платежи месяца: PAID / DUE / OVERDUE |
+| POST | `/finance/recurring/track` | CREATE | Сделать кандидата обязательным платежом (`financial_need`) |
+| GET | `/finance/goals/summary` | VIEW | Копилки: накоплено, темп, прогноз даты, нужный взнос под срок |
+| GET/POST | `/finance/goals/:id/contributions` | VIEW/CREATE | История / пополнение (отрицательная сумма — изъятие) |
+| POST | `/finance/cleanup/preview` | VIEW | Что попадёт под очистку `{all?, accountId?, source?, dateFrom?, dateTo?}` |
+| POST | `/finance/cleanup/archive` | ARCHIVE | Архивировать, `confirmCount` должен совпасть с предпросмотром |
+| GET | `/finance/ai/status` | VIEW | Доступность каждой модели в цепочке (основная/резервная) |
+| GET | `/finance/ai/facts?startDate&endDate` | VIEW | Посчитанные кодом факты периода (то, что видит ИИ) |
+| POST | `/finance/ai/reports` | CREATE | `{periodStart, periodEnd, useAi?}` — отчёт; текст ИИ генерируется в фоне (`reportStatus: GENERATING → READY`) |
+| POST | `/finance/ai/reports/:id/regenerate` | EDIT | Пересчитать факты и текст |
+| POST | `/finance/ai/ask` | VIEW | Вопрос ИИ про финансы за период |
+| POST | `/finance/ai/categorize/suggest` | VIEW | ИИ-подсказки категорий (ничего не сохраняет) |
+| POST | `/finance/ai/categorize/apply` | EDIT | Применить подтверждённые подсказки `{items:[{transactionId, categoryId}]}` |

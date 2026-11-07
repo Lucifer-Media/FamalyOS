@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { AppShell } from '@/components/app-shell';
 import { useRequireAuth } from '@/lib/use-require-auth';
 import { FinanceSubNav } from '@/components/finance-subnav';
@@ -8,7 +9,7 @@ import EntityLinkSelect from '@/components/ui/entity-link-select';
 import { apiFetch, ApiError } from '@/lib/api';
 import { Button, Card, ErrorText, Badge } from '@/components/ui';
 import { toast } from 'sonner';
-import { Plus, Pencil, ArrowUpRight, ArrowDownLeft, CalendarClock, Archive, Download, ArrowLeftRight } from 'lucide-react';
+import { Plus, Pencil, ArrowUpRight, ArrowDownLeft, CalendarClock, Archive, Download, ArrowLeftRight, Eraser } from 'lucide-react';
 
 interface TransactionEntity {
   id: string;
@@ -313,7 +314,10 @@ export default function TransactionsPage() {
         </Button>
       </div>
 
-      <div className="mt-2 flex justify-end gap-2">
+      <div className="mt-2 flex flex-wrap justify-end gap-2">
+        <Link href="/finance/cleanup" className="inline-flex items-center gap-2 rounded-card px-4 py-2 text-sm font-medium text-ink/70 hover:bg-paper-dim">
+          <Eraser size={16} /> Очистка тестовых
+        </Link>
         <Button variant="secondary" onClick={openTransfer} disabled={accounts.length < 2}>
           <ArrowLeftRight size={16} /> Перевод между счетами
         </Button>

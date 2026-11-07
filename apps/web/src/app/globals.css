@@ -98,3 +98,27 @@ body {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.85em;
 }
+
+/* Итерация 4: ИИ-отчёты — нумерованные списки, жирный текст, печать */
+.markdown-body ol {
+  list-style: decimal;
+  padding-left: 1.4rem;
+  margin: 0.5rem 0;
+}
+.markdown-body li {
+  margin: 0.2rem 0;
+}
+.markdown-body strong {
+  font-weight: 600;
+}
+@media print {
+  aside,
+  header,
+  nav {
+    display: none !important;
+  }
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+}
