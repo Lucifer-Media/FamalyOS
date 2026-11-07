@@ -14,6 +14,34 @@ export function setTokens(accessToken: string, refreshToken: string) {
   window.localStorage.setItem(REFRESH_KEY, refreshToken);
 }
 
+// Итерация 4.2: токен «запомненного устройства» — отдельно для каждого email
+// и НЕ удаляется при выходе (иначе после выхода снова спросит код 2FA).
+const DEVICE_PREFIX = 'familyos.device.';
+
+export function getDeviceToken(email: string): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  try {
+    return window.localStorage.getItem(DEVICE_PREFIX + email.trim().toLowerCase()) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function setDeviceToken(email: string, token: string | null) {
+  try {
+    const key = DEVICE_PREFIX + email.trim().toLowerCase();
+    if (token) window.localStorage.setItem(key, token);
+    else window.localStorage.removeItem(key);
+  } catch {
+    /* приватный режим — просто не запоминаем */
+  }
+}
+
+export function getRefreshToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return window.localStorage.getItem(REFRESH_KEY);
+}
+
 export function clearTokens() {
   window.localStorage.removeItem(TOKEN_KEY);
   window.localStorage.removeItem(REFRESH_KEY);
@@ -98,7 +126,11 @@ export async function apiFetch<T = any>(path: string, options: RequestOptions = 
       /* noop */
     }
     const message = (body as any)?.message ?? `Ошибка запроса (${res.status})`;
-    throw new ApiError(res.status, Array.isArray(message) ? message.join(', ') : message, body);
+    // Итерация 4.2: «Данные не прошли проверку» теперь с перечнем полей —
+    // раньше было непонятно, что именно не так (например, не выбрана валюта).
+    const details = Array.isArray((body as any)?.errors) ? (body as any).errors.join('; ') : '';
+    const text = Array.isArray(message) ? message.join(', ') : String(message);
+    throw new ApiError(res.status, details ? `${text}: ${details}` : text, body);
   }
 
   if (res.status === 204) return undefined as T;

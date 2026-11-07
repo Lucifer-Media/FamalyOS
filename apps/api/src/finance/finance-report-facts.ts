@@ -57,6 +57,8 @@ export interface ReportFacts {
   needs: { name: string; status: string; planned: number; paid: number }[];
   goals: { name: string; saved: number; target: number; percent: number; estimatedDate: string | null }[];
   netWorth?: number | null;
+  /** Итерация 4.2: балансы счетов — чтобы ИИ мог ответить «сколько на счёте». */
+  accounts?: { name: string; bank?: string; balance: number | null; currency: string; owner?: string }[];
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -121,6 +123,7 @@ export function buildReportFacts(input: {
   needs?: ReportFacts['needs'];
   goals?: ReportFacts['goals'];
   netWorth?: number | null;
+  accounts?: ReportFacts['accounts'];
   averageWindow?: number;
 }): ReportFacts {
   const { periodStart, periodEnd } = input;
@@ -215,11 +218,33 @@ export function buildReportFacts(input: {
     needs: input.needs ?? [],
     goals: input.goals ?? [],
     netWorth: input.netWorth ?? null,
+    accounts: input.accounts ?? [],
   };
+}
+
+/** Число → строка «378,45» / «45 300» — ровно так модель и должна его написать. */
+export function ruNumber(n: number): string {
+  return n.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).replace(/[\u00a0\u202f]/g, ' ');
+}
+
+/**
+ * РЕГРЕССИЯ Итерации 4.2: модель прочитала 378.45 (JSON-число с точкой) как
+ * «378 450 ₽». Теперь все числа уходят в промпт готовыми русскими строками
+ * («378,45») — модели остаётся их только переписать.
+ */
+export function toPromptValues(value: unknown): unknown {
+  if (typeof value === 'number') return Number.isFinite(value) ? ruNumber(value) : value;
+  if (Array.isArray(value)) return value.map(toPromptValues);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, toPromptValues(v)]));
+  return value;
 }
 
 /** Компактная версия фактов для промпта — у локальной модели на CPU маленькое окно контекста. */
 export function compactFacts(f: ReportFacts) {
+  return toPromptValues(compactFactsRaw(f));
+}
+
+function compactFactsRaw(f: ReportFacts) {
   return {
     период: `${f.periodStart} — ${f.periodEnd}`,
     валюта: f.currency,
@@ -246,6 +271,7 @@ export function compactFacts(f: ReportFacts) {
     обязательные_платежи: f.needs,
     копилки: f.goals,
     чистый_капитал: f.netWorth,
+    счета: (f.accounts ?? []).map((a) => ({ счёт: a.name, банк: a.bank, владелец: a.owner, баланс: a.balance, валюта: a.currency })),
   };
 }
 
@@ -254,7 +280,7 @@ const COMMON_RULES = [
   '1. Используй ТОЛЬКО числа из блока ДАННЫЕ. Не считай новые суммы сам, не складывай и не округляй по-своему — нужное уже посчитано.',
   '2. Если данных для вывода нет — так и скажи, не выдумывай.',
   '3. Пиши по-русски, для семьи из двух человек, без воды и без общих советов из интернета.',
-  '4. Суммы пиши как в данных, с пробелами между разрядами и знаком ₽ (или валютой из данных).',
+  '4. Суммы переписывай ТОЧНО как в данных — это уже готовые строки («378,45» — это 378 рублей 45 копеек, а не 378 тысяч). Добавляй знак ₽ (или валюту из данных).',
 ];
 
 export function buildReportPrompt(facts: ReportFacts): string {

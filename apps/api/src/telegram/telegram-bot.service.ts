@@ -260,11 +260,18 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     }
     const chatId = String(msg.chat.id);
     if (!this.allowedChats.has(chatId)) {
-      // Подсказываем ID чата не чаще раза в час — чтобы было что вписать в .env.
+      // Раньше бот после первого предупреждения молчал час — /link и команды
+      // уходили «в пустоту». Теперь на команды отвечает всегда (не чаще раза
+      // в 30 с), на обычный текст — раз в час.
+      const isCommand = (msg.text ?? '').trim().startsWith('/');
       const last = this.warnedChats.get(chatId) ?? 0;
-      if (Date.now() - last > 3600000) {
+      if (Date.now() - last > (isCommand ? 30000 : 3600000)) {
         this.warnedChats.set(chatId, Date.now());
-        await this.client?.sendMessage(chatId, `Этот чат не разрешён для Family OS.\nID чата: <code>${escapeHtml(chatId)}</code> — добавьте его в TELEGRAM_ALLOWED_CHAT_IDS на сервере.`);
+        this.logger.warn(`Сообщение из неразрешённого чата ${chatId} (${msg.chat.type}) — добавьте его в TELEGRAM_ALLOWED_CHAT_IDS`);
+        await this.client?.sendMessage(
+          chatId,
+          `Этот чат не разрешён для Family OS — команды здесь не выполняются.\nID чата: <code>${escapeHtml(chatId)}</code>\nДобавьте его в TELEGRAM_ALLOWED_CHAT_IDS на сервере (через запятую) и перезапустите api.`,
+        );
       }
       return;
     }
@@ -780,12 +787,31 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
   private async cmdAsk(msg: TgMessage, link: TelegramLink, question: string) {
     if (!question) return this.reply(msg, 'Напишите вопрос: <code>/ask на что ушло больше всего в этом месяце?</code>');
+    // Баланс счёта — точный факт из базы, ИИ тут не нужен (и может перепутать копейки).
+    if (/баланс|остат|сколько\s+(денег\s+)?(на|в)\s/i.test(question)) {
+      const accounts = await this.loadAccounts(link.familySpaceId);
+      const r = resolveAccountInText(question, accounts, await this.senderPersonId(link));
+      const picked = r.accountId ? accounts.filter((a) => a.id === r.accountId) : r.ambiguous ? accounts.filter((a) => r.ambiguous!.includes(a.id)) : [];
+      if (picked.length) return this.replyBalances(msg, link, picked.map((a) => a.id));
+      if (/(все|всех|счета|счетам|итого|всего)/i.test(question)) return this.cmdBalance(msg, link);
+    }
     await this.reply(msg, '🤔 Думаю…');
     const { start, end } = this.monthRange(false);
     const res = await this.ai.ask(link.userId, link.familySpaceId, { question, periodStart: start, periodEnd: end });
     if (res.unavailable || !res.answer) return this.reply(msg, 'ИИ сейчас недоступен. Цифры — /month.');
     const warn = res.unverifiedNumbers?.length ? `\n\n⚠️ Числа не из расчётов: ${escapeHtml(res.unverifiedNumbers.join(', '))}` : '';
     await this.reply(msg, `${markdownToTelegramHtml(res.answer)}${warn}`);
+  }
+
+  private async replyBalances(msg: TgMessage, link: TelegramLink, ids: string[]) {
+    const rows = await this.prisma.entity.findMany({ where: { id: { in: ids } }, select: { id: true, title: true, attributes: true } });
+    const labels = new Map((await this.loadAccounts(link.familySpaceId)).map((a) => [a.id, a.label]));
+    const lines = (rows as { id: string; title: string; attributes: unknown }[]).map((r) => {
+      const a = (r.attributes ?? {}) as Attrs;
+      const bal = typeof a.currentBalance === 'number' ? rub(a.currentBalance, String(a.currency ?? 'RUB')) : 'баланс не указан';
+      return `💳 <b>${escapeHtml(labels.get(r.id) ?? String(a.accountName || r.title))}</b>: ${bal}`;
+    });
+    await this.reply(msg, `${lines.join('\n')}\n<i>Баланс — из карточки счёта в Family OS.</i>`);
   }
 
   private async cmdAccount(msg: TgMessage, link: TelegramLink) {

@@ -7,6 +7,9 @@ import {
   clearTokens,
   getAccessToken,
   getCurrentFamilySpaceId,
+  getDeviceToken,
+  getRefreshToken,
+  setDeviceToken,
   setCurrentFamilySpaceId,
   setTokens,
 } from './api';
@@ -25,7 +28,7 @@ interface AuthContextValue {
   currentFamilySpaceId: string | null;
   currentRole: string | null;
   setCurrentFamilySpace: (id: string) => void;
-  login: (email: string, password: string, twoFactorCode?: string) => Promise<any>;
+  login: (email: string, password: string, twoFactorCode?: string, rememberDevice?: boolean) => Promise<any>;
   register: (data: {
     email: string;
     password: string;
@@ -73,12 +76,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [reloadFamilySpaces]);
 
   const login = useCallback(
-    async (email: string, password: string, twoFactorCode?: string) => {
+    async (email: string, password: string, twoFactorCode?: string, rememberDevice?: boolean) => {
       const res = await apiFetch('/auth/login', {
         method: 'POST',
-        body: { email, password, twoFactorCode },
+        body: { email, password, twoFactorCode, deviceToken: getDeviceToken(email), rememberDevice: rememberDevice || undefined },
         skipAuth: true,
       });
+      if (res.deviceToken) setDeviceToken(email, res.deviceToken);
       setTokens(res.accessToken, res.refreshToken);
       setIsAuthenticated(true);
       await reloadFamilySpaces();
@@ -101,6 +105,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
+    // Отзываем сессию на сервере (раньше токен просто удалялся из браузера).
+    const refreshToken = getRefreshToken();
+    if (refreshToken) apiFetch('/auth/logout', { method: 'POST', body: { refreshToken }, skipAuth: true }).catch(() => undefined);
     clearTokens();
     setIsAuthenticated(false);
     setFamilySpaces([]);

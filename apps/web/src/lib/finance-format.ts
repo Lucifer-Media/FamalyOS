@@ -3,7 +3,8 @@
 export function money(n: number | null | undefined, currency = 'RUB'): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return '—';
   const sign = currency === 'RUB' ? '₽' : currency;
-  return `${Math.round(n).toLocaleString('ru-RU')} ${sign}`;
+  // Копейки показываем, если они есть (378,45 ₽), иначе целые рубли.
+  return `${n.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${sign}`;
 }
 
 export function monthBounds(offset = 0): { start: string; end: string } {

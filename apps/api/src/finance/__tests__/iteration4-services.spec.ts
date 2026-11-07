@@ -22,6 +22,7 @@ function makePrisma(rows: Row[]) {
       }),
     },
     familySpace: { findUnique: jest.fn(async () => ({ baseCurrency: 'RUB' })) },
+    person: { findMany: jest.fn(async () => []) },
   };
 }
 

@@ -162,13 +162,20 @@ export class MembershipsService {
       where: { id: membershipId },
       data: { status },
     });
+    // Итерация 4.2: приостановленный участник выходит сразу — его сессии и
+    // доверенные устройства отзываются (записи сохраняются, это не удаление).
+    let revokedSessions = 0;
+    if (status !== 'ACTIVE' && target.userId !== userId) {
+      revokedSessions = (await this.prisma.session.updateMany({ where: { userId: target.userId, revokedAt: null }, data: { revokedAt: new Date() } })).count;
+      await this.prisma.trustedDevice.updateMany({ where: { userId: target.userId, revokedAt: null }, data: { revokedAt: new Date(), revokedByUserId: userId, revokeReason: 'Участник приостановлен' } });
+    }
     await this.audit.log({
       familySpaceId,
       actorUserId: userId,
       action: 'membership.status_change',
       resourceType: 'Membership',
       resourceId: membershipId,
-      metadata: { from: target.status, to: status },
+      metadata: { from: target.status, to: status, revokedSessions },
     });
     return updated;
   }

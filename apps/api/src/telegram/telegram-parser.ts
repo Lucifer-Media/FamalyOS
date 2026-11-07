@@ -171,7 +171,8 @@ export function escapeHtml(s: string): string {
 
 export function rub(n: number, currency = 'RUB'): string {
   const sign = currency === 'RUB' ? '₽' : currency;
-  return `${Math.round(n).toLocaleString('ru-RU').replace(/ /g, ' ')} ${sign}`;
+  // Копейки — если есть (378,45 ₽): раньше округлялось до рублей.
+  return `${n.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).replace(/[  ]/g, ' ')} ${sign}`;
 }
 
 /** Упрощённый перевод Markdown отчёта ИИ в Telegram-HTML (заголовки → жирный, **x** → <b>). */

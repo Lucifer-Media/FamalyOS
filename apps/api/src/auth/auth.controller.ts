@@ -1,15 +1,15 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto, TwoFactorVerifyDto, UseRecoveryCodeDto, RegenerateRecoveryCodesDto } from './dto/misc.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { CurrentUser, CurrentSessionId } from '../common/decorators/current-user.decorator';
+import { clientContext } from './client-context';
 
-function ctxFrom(req: Request) {
-  return { ipAddress: req.ip, userAgent: req.headers['user-agent'] };
-}
+// Итерация 4.2: реальный IP клиента (раньше req.ip — адрес контейнера web).
+const ctxFrom = (req: Request) => clientContext(req);
 
 @Controller('auth')
 export class AuthController {
@@ -31,8 +31,8 @@ export class AuthController {
   }
 
   @Post('refresh')
-  refresh(@Body() dto: RefreshDto) {
-    return this.auth.refresh(dto.refreshToken);
+  refresh(@Body() dto: RefreshDto, @Req() req: Request) {
+    return this.auth.refresh(dto.refreshToken, ctxFrom(req));
   }
 
   @Post('logout')
@@ -68,5 +68,55 @@ export class AuthController {
   @Get('2fa/recovery/status')
   getRecoveryCodesStatus(@CurrentUser() userId: string) {
     return this.auth.getRecoveryCodesStatus(userId);
+  }
+
+  // ---------- Итерация 4.2: мой профиль ----------
+
+  @UseGuards(JwtAuthGuard)
+  @Get('me')
+  me(@CurrentUser() userId: string) {
+    return this.auth.me(userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('password')
+  changePassword(@CurrentUser() userId: string, @CurrentSessionId() sid: string | undefined, @Body() body: { currentPassword: string; newPassword: string }) {
+    return this.auth.changePassword(userId, body.currentPassword, body.newPassword, sid);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('email')
+  changeEmail(@CurrentUser() userId: string, @Body() body: { password: string; email: string }) {
+    return this.auth.changeEmail(userId, body.password, body.email);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('sessions')
+  sessions(@CurrentUser() userId: string, @CurrentSessionId() sid: string | undefined) {
+    return this.auth.listSessions(userId, sid);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('sessions/:id/revoke')
+  revokeSession(@CurrentUser() userId: string, @Param('id') id: string) {
+    return this.auth.revokeSession(userId, id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('sessions/revoke-others')
+  async revokeOtherSessions(@CurrentUser() userId: string, @CurrentSessionId() sid: string | undefined) {
+    return { revoked: await this.auth.revokeAllSessions(userId, sid) };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('devices')
+  devices(@CurrentUser() userId: string) {
+    return this.auth.listDevices(userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('devices/:id/revoke')
+  revokeDevice(@CurrentUser() userId: string, @Param('id') id: string) {
+    return this.auth.revokeDevice(userId, id);
   }
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { AppShell } from '@/components/app-shell';
 import { useRequireAuth } from '@/lib/use-require-auth';
 import { useAuth } from '@/lib/auth-context';
@@ -89,7 +90,7 @@ export default function MembersPage() {
     <AppShell>
       <h1 className="font-display text-2xl font-semibold text-ink">Участники</h1>
       <p className="mt-1 text-sm text-ink/60">
-        Роли определяют права по умолчанию; точечные исключения настраиваются владельцем через API.
+        Роли определяют права по умолчанию. Нажмите на имя — откроется карточка: данные, пароль, 2FA, сеансы и устройства.
       </p>
 
       <ErrorText>{error}</ErrorText>
@@ -143,7 +144,12 @@ export default function MembersPage() {
           <tbody>
             {members.map((m) => (
               <tr key={m.id} className="border-b border-line/60 last:border-0">
-                <td className="py-2 pr-3">{m.person.fullName}</td>
+                <td className="py-2 pr-3">
+                  {/* Итерация 4.2: карточка участника — данные, пароль, 2FA, сеансы, устройства */}
+                  <Link href={`/members/${m.id}`} className="font-medium text-ink hover:underline">
+                    {m.person.fullName}
+                  </Link>
+                </td>
                 <td className="py-2 pr-3">
                   {canManage ? (
                     <select

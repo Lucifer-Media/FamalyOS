@@ -14,6 +14,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [needsTwoFactor, setNeedsTwoFactor] = useState(false);
+  const [rememberDevice, setRememberDevice] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -22,7 +23,7 @@ export default function LoginPage() {
     setError('');
     setBusy(true);
     try {
-      const res = await login(email, password, twoFactorCode || undefined);
+      const res = await login(email, password, twoFactorCode || undefined, needsTwoFactor && rememberDevice);
       if (res.twoFactorSetupRequired) {
         router.push('/2fa-setup');
       } else {
@@ -59,14 +60,24 @@ export default function LoginPage() {
               />
             </Field>
             {needsTwoFactor && (
-              <Field label="Код двухфакторной аутентификации" hint="Из приложения-аутентификатора">
-                <Input
-                  value={twoFactorCode}
-                  onChange={(e) => setTwoFactorCode(e.target.value)}
-                  autoFocus
-                  inputMode="numeric"
-                />
-              </Field>
+              <>
+                <Field label="Код двухфакторной аутентификации" hint="Из приложения-аутентификатора">
+                  <Input
+                    value={twoFactorCode}
+                    onChange={(e) => setTwoFactorCode(e.target.value)}
+                    autoFocus
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                  />
+                </Field>
+                <label className="flex items-start gap-2 text-sm text-ink/70">
+                  <input type="checkbox" className="mt-0.5 h-4 w-4" checked={rememberDevice} onChange={(e) => setRememberDevice(e.target.checked)} />
+                  <span>
+                    Запомнить это устройство на 30 дней
+                    <span className="block text-xs text-ink/50">Пароль всё равно нужен; код не спросим, пока вход с этого браузера и уже знакомого IP-адреса.</span>
+                  </span>
+                </label>
+              </>
             )}
             <ErrorText>{error}</ErrorText>
             <Button type="submit" className="w-full" disabled={busy}>

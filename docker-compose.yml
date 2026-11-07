@@ -92,6 +92,10 @@ services:
       TELEGRAM_API_URL: ${TELEGRAM_API_URL:-}
       TELEGRAM_BUDGET_CHECK_MINUTES: ${TELEGRAM_BUDGET_CHECK_MINUTES:-60}
       FAMILY_TIMEZONE: ${FAMILY_TIMEZONE:-Europe/Moscow}
+      # Итерация 4.2 — «запомнить устройство» (вход без кода 2FA, пароль обязателен).
+      # strict — только с уже знакомых этому устройству IP; off — IP не проверять.
+      TRUSTED_DEVICE_IP_POLICY: ${TRUSTED_DEVICE_IP_POLICY:-strict}
+      TRUSTED_DEVICE_DAYS: ${TRUSTED_DEVICE_DAYS:-30}
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-}

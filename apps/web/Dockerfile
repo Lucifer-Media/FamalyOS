@@ -21,10 +21,12 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/.next ./.next
 COPY --from=build /app/public ./public
 COPY --from=build /app/next.config.mjs ./next.config.mjs
+COPY --from=build /app/server.js ./server.js
 COPY package.json ./
 
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
   CMD node -e "require('http').get('http://127.0.0.1:3000/login',res=>process.exit(res.statusCode<500?0:1)).on('error',()=>process.exit(1))"
 
-CMD ["npm", "run", "start"]
+# Итерация 4.2: свой server.js — передаёт API реальный IP клиента (X-Forwarded-For)
+CMD ["node", "server.js"]

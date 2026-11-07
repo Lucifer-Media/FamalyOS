@@ -95,6 +95,19 @@ describe('Telegram-бот', () => {
     expect(entitiesSvc.create).not.toHaveBeenCalled();
   });
 
+  it('РЕГРЕССИЯ: в неразрешённом чате команды после первого предупреждения не уходят в тишину', async () => {
+    const { svc, tg, entitiesSvc } = setup();
+    await svc.handleUpdate(msg('привет', 111, 429043619));
+    expect(tg.sent).toHaveLength(1);
+    await svc.handleUpdate(msg('ещё текст', 111, 429043619, 11));
+    expect(tg.sent).toHaveLength(1); // обычный текст — не спамим
+    (svc as any).warnedChats.set('429043619', Date.now() - 31000);
+    await svc.handleUpdate(msg('/link 335830', 111, 429043619, 12));
+    expect(tg.sent).toHaveLength(2);
+    expect(tg.sent[1].text).toContain('429043619');
+    expect(entitiesSvc.create).not.toHaveBeenCalled();
+  });
+
   it('без привязки ничего не записывает и просит /link', async () => {
     const { svc, tg, entitiesSvc } = setup();
     await svc.handleUpdate(msg('350 кофе'));
@@ -185,6 +198,17 @@ describe('Счёт по наименованию, банку и владельц
   it('«семейный счёт» без банка — спросить; просто «семейный» — это тип расхода', () => {
     expect(resolveAccountInText('продукты 2000 семейный счёт', accs, 'p-max').ambiguous).toEqual(['fam-a', 'fam-t']);
     expect(resolveAccountInText('продукты 2000 семейный', accs, 'p-max')).toEqual({ text: 'продукты 2000 семейный' });
+  });
+});
+
+describe('Бот: баланс без ИИ и копейки', () => {
+  it('РЕГРЕССИЯ: «/ask баланс по семейному счёту альфа» — точный баланс с копейками, без модели', async () => {
+    const { svc, tg, entities } = setup({ linked: true });
+    Object.assign(entities.find((e: any) => e.id === 'acc-a').attributes, { accountName: 'Семейный', bankName: 'Альфа Банк', currentBalance: 378.45 });
+    await svc.handleUpdate(msg('/ask напиши текущие баланс по семейному счета альфа'));
+    expect(tg.sent).toHaveLength(1);
+    expect(tg.sent[0].text).toContain('378,45 ₽');
+    expect(tg.sent[0].text).not.toContain('378 450');
   });
 });
 

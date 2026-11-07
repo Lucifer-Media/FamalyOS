@@ -50,7 +50,7 @@
 2. В `.env` рядом с `docker-compose.yml`:
    ```bash
    TELEGRAM_BOT_TOKEN=123456:ABC...
-   TELEGRAM_ALLOWED_CHAT_IDS=-5373163824     # можно несколько через запятую
+   TELEGRAM_ALLOWED_CHAT_IDS=-5373163824,429043619   # группа + личный чат с ботом (у личного чата ID = ваш Telegram ID)
    # TELEGRAM_API_URL=https://...            # только если api.telegram.org недоступен напрямую
    # TELEGRAM_BUDGET_CHECK_MINUTES=60
    # FAMILY_TIMEZONE=Europe/Moscow

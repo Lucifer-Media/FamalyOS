@@ -177,6 +177,16 @@ describe('Факты ИИ-отчёта', () => {
   });
 });
 
+describe('Числа в промпте — готовыми русскими строками', () => {
+  it('РЕГРЕССИЯ: 378.45 уходит модели как «378,45», а «378,45» в ответе проверку проходит', () => {
+    const { compactFacts, buildReportFacts, findUnverifiedNumbers } = require('../finance-report-facts');
+    const f = buildReportFacts({ periodStart: '2026-11-01', periodEnd: '2026-11-30', currency: 'RUB', transactions: [], categoryNames: {}, accounts: [{ name: 'Семейный', bank: 'Альфа Банк', balance: 378.45, currency: 'RUB' }] });
+    expect(JSON.stringify(compactFacts(f))).toContain('"баланс":"378,45"');
+    expect(findUnverifiedNumbers('На счёте 378,45 ₽', f)).toEqual([]);
+    expect(findUnverifiedNumbers('На счёте 378 450 ₽', f)).toEqual(['378 450']);
+  });
+});
+
 describe('ИИ-категоризация: разбор ответа', () => {
   it('принимает только категории из справочника', () => {
     const txs = [{ id: 'a', amount: -100 }, { id: 'b', amount: -200 }, { id: 'c', amount: -300 }];

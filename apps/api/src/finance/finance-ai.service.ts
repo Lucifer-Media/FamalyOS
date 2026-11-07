@@ -65,11 +65,26 @@ export class FinanceAiService {
     const space = await this.prisma.familySpace.findUnique({ where: { id: familySpaceId } });
     const currency = space?.baseCurrency ?? 'RUB';
 
-    const [txs, categories, budgets] = await Promise.all([
+    const [txs, categories, budgets, accountRows, banks, people] = await Promise.all([
       this.automation.loadActiveTransactions(familySpaceId),
       this.prisma.entity.findMany({ where: { familySpaceId, entityType: 'financial_category' }, select: { id: true, title: true, attributes: true } }),
       this.prisma.entity.findMany({ where: { familySpaceId, entityType: 'budget', status: 'ACTIVE' }, select: { id: true, attributes: true } }),
+      this.prisma.entity.findMany({ where: { familySpaceId, entityType: 'bank_account', status: 'ACTIVE' }, select: { title: true, ownerPersonId: true, attributes: true } }),
+      this.prisma.entity.findMany({ where: { familySpaceId, entityType: 'bank' }, select: { id: true, title: true, attributes: true } }),
+      this.prisma.person.findMany({ where: { familySpaceId }, select: { id: true, fullName: true } }),
     ]);
+    const bankName = new Map(((banks ?? []) as { id: string; title: string; attributes: unknown }[]).map((b) => [b.id, String(((b.attributes ?? {}) as Attrs).name ?? b.title)]));
+    const personName = new Map(((people ?? []) as { id: string; fullName: string }[]).map((p) => [p.id, p.fullName]));
+    const accounts: ReportFacts['accounts'] = ((accountRows ?? []) as { title: string; ownerPersonId?: string | null; attributes: unknown }[]).map((r) => {
+      const a = (r.attributes ?? {}) as Attrs;
+      return {
+        name: String(a.accountName || r.title),
+        bank: (a.bankId ? bankName.get(String(a.bankId)) : undefined) ?? (a.bankName as string | undefined),
+        balance: typeof a.currentBalance === 'number' ? a.currentBalance : null,
+        currency: String(a.currency ?? 'RUB'),
+        owner: a.isShared === true || !r.ownerPersonId ? 'общий' : personName.get(r.ownerPersonId),
+      };
+    });
 
     const categoryNames: Record<string, string> = {};
     for (const c of categories as { id: string; title: string; attributes: unknown }[]) {
@@ -133,6 +148,7 @@ export class FinanceAiService {
         .filter((g) => g.entityStatus === 'ACTIVE')
         .map((g) => ({ name: g.name, saved: g.savedAmount, target: g.targetAmount, percent: g.percent, estimatedDate: g.estimatedDate })),
       netWorth: netWorth?.netWorth ?? null,
+      accounts,
     });
     return { facts, otherCurrencyCount };
   }

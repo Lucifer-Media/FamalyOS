@@ -4,7 +4,7 @@ import { ReactNode, useState, FormEvent } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import clsx from 'clsx';
-import { BookOpen, FolderClosed, Home, LogOut, Menu, Search, ShieldCheck, Users, X, FileStack, MapPin, HeartPulse, ScanLine, Wallet, Zap, Sparkles } from 'lucide-react';
+import { BookOpen, FolderClosed, Home, LogOut, Menu, Search, ShieldCheck, Users, X, FileStack, MapPin, HeartPulse, ScanLine, Wallet, Zap, Sparkles, UserCog } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 
 const NAV_ITEMS = [
@@ -54,9 +54,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             currentFamilySpaceId={currentFamilySpaceId}
             onChange={setCurrentFamilySpace}
           />
+          <Link href="/profile" className="mt-2 flex w-full items-center gap-2 rounded-card px-3 py-2 text-sm text-ink/60 hover:bg-paper-dim">
+            <UserCog size={16} /> Мой профиль
+          </Link>
           <button
             onClick={logout}
-            className="mt-2 flex w-full items-center gap-2 rounded-card px-3 py-2 text-sm text-ink/60 hover:bg-paper-dim"
+            className="flex w-full items-center gap-2 rounded-card px-3 py-2 text-sm text-ink/60 hover:bg-paper-dim"
           >
             <LogOut size={16} /> Выйти
           </button>
@@ -99,9 +102,12 @@ export function AppShell({ children }: { children: ReactNode }) {
                 />
               ))}
             </nav>
+            <Link href="/profile" onClick={() => setMobileOpen(false)} className="mt-4 flex w-full items-center gap-2 rounded-card px-3 py-2 text-sm text-ink/60 hover:bg-paper-dim">
+              <UserCog size={16} /> Мой профиль
+            </Link>
             <button
               onClick={logout}
-              className="mt-4 flex w-full items-center gap-2 rounded-card px-3 py-2 text-sm text-ink/60 hover:bg-paper-dim"
+              className="flex w-full items-center gap-2 rounded-card px-3 py-2 text-sm text-ink/60 hover:bg-paper-dim"
             >
               <LogOut size={16} /> Выйти
             </button>

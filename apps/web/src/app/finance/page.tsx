@@ -121,7 +121,13 @@ export default function FinancePage() {
           <h1 className="font-display text-2xl font-semibold text-ink">Финансы</h1>
           <p className="mt-1 text-sm text-ink/60">Счета, операции, импорт выписок и сверка с ЖКХ.</p>
         </div>
-        <Button onClick={() => setCreating((v) => !v)} disabled={!schema}>
+        <Button
+          onClick={() => {
+            setCreating((v) => !v);
+            setValues((v) => ({ currency: 'RUB', accountType: 'CHECKING', ...v }));
+          }}
+          disabled={!schema}
+        >
           <Plus size={16} /> Добавить счёт
         </Button>
       </div>
@@ -183,7 +189,7 @@ export default function FinancePage() {
               {group.items.filter((a) => a.status !== 'ARCHIVED').length} счёт(а)
               {(() => {
                 const sum = group.items.filter((a) => a.status !== 'ARCHIVED' && a.attributes.currency === 'RUB' && typeof a.attributes.currentBalance === 'number').reduce((x, a) => x + (a.attributes.currentBalance as number), 0);
-                return sum ? ` · ${Math.round(sum).toLocaleString('ru-RU')} ₽` : '';
+                return sum ? ` · ${sum.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₽` : '';
               })()}
             </span>
           </div>

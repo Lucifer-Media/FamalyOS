@@ -133,6 +133,7 @@ model User {
   entityVersionsAuthored EntityVersion[]
   filesCreated       FileObject[] @relation("FileCreatedBy")
   loginAttempts      LoginAttempt[]
+  trustedDevices     TrustedDevice[]
 
   @@map("users")
 }
@@ -150,6 +151,31 @@ model Session {
 
   @@index([userId])
   @@map("sessions")
+}
+
+// Итерация 4.2: «запомнить это устройство» — вход без кода 2FA (пароль
+// остаётся обязательным). В браузере хранится случайный токен, здесь — только
+// его sha256. Устройство привязано к списку IP, с которых с ним уже проходили
+// 2FA (knownIps). Удаления нет — только отзыв (revokedAt), история остаётся.
+model TrustedDevice {
+  id               String    @id @default(uuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id])
+  tokenHash        String    @unique
+  label            String    // «Chrome · macOS» — по User-Agent
+  userAgent        String?
+  knownIps         Json      // ["100.86.22.10", "192.168.1.23"]
+  createdIp        String?
+  lastUsedIp       String?
+  createdAt        DateTime  @default(now())
+  lastUsedAt       DateTime?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  revokedByUserId  String?
+  revokeReason     String?
+
+  @@index([userId])
+  @@map("trusted_devices")
 }
 
 model LoginAttempt {
