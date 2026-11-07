@@ -29,7 +29,22 @@ interface Member {
 
 export default function MembersPage() {
   const { loading, isAuthenticated } = useRequireAuth();
-  const { currentFamilySpaceId, currentRole } = useAuth();
+  const { currentFamilySpaceId, currentRole, familySpaces, reloadFamilySpaces } = useAuth();
+  const requireTwoFactor = familySpaces.find((s) => s.id === currentFamilySpaceId)?.requireTwoFactor !== false;
+  const [savingPolicy, setSavingPolicy] = useState(false);
+
+  async function onTogglePolicy(next: boolean) {
+    setSavingPolicy(true);
+    setError('');
+    try {
+      await apiFetch(`/family-spaces/${currentFamilySpaceId}/security`, { method: 'PATCH', body: { requireTwoFactor: next } });
+      await reloadFamilySpaces();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Не удалось изменить настройку');
+    } finally {
+      setSavingPolicy(false);
+    }
+  }
   const [members, setMembers] = useState<Member[]>([]);
   const [error, setError] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
@@ -94,6 +109,22 @@ export default function MembersPage() {
       </p>
 
       <ErrorText>{error}</ErrorText>
+
+      {currentRole === 'OWNER' && (
+        <Card className="mt-4">
+          <label className="flex items-start gap-3">
+            <input type="checkbox" className="mt-1 h-4 w-4" checked={requireTwoFactor} disabled={savingPolicy} onChange={(e) => onTogglePolicy(e.target.checked)} />
+            <span>
+              <span className="font-medium">Требовать двухфакторную аутентификацию от всех участников</span>
+              <span className="mt-0.5 block text-xs text-ink/50">
+                {requireTwoFactor
+                  ? 'Включено: без 2FA после входа система отправляет на её настройку.'
+                  : 'Выключено: 2FA добровольная — каждый может отключить её себе в «Мой профиль», вы — участнику в его карточке. У кого 2FA включена, у того код спрашивается как раньше.'}
+              </span>
+            </span>
+          </label>
+        </Card>
+      )}
 
       {canManage && (
         <Card className="mt-4">

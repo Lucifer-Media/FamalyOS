@@ -122,6 +122,15 @@ describe('Запомненные устройства', () => {
     expect(user.twoFactorEnabled).toBe(true);
   });
 
+  it('политика семьи: без обязательной 2FA на настройку не отправляем', async () => {
+    const off = await setup({ twoFactor: false });
+    (off.svc as any).prisma.membership.findMany = jest.fn(async () => [{ role: 'OWNER', familySpace: { id: 'fs', name: 'Семья', requireTwoFactor: false } }]);
+    expect((await off.svc.login({ email: 'max@example.com', password: 'CorrectHorse42!' }, MAC)).twoFactorSetupRequired).toBe(false);
+    const on = await setup({ twoFactor: false });
+    (on.svc as any).prisma.membership.findMany = jest.fn(async () => [{ role: 'OWNER', familySpace: { id: 'fs', name: 'Семья', requireTwoFactor: true } }]);
+    expect((await on.svc.login({ email: 'max@example.com', password: 'CorrectHorse42!' }, MAC)).twoFactorSetupRequired).toBe(true);
+  });
+
   it('сессия хранит устройство и IP', async () => {
     const { svc, sessions } = await setup({ twoFactor: false });
     await svc.login({ email: 'max@example.com', password: 'CorrectHorse42!' }, MAC);
@@ -197,5 +206,20 @@ describe('Управление учётными записями владель�
     await expect(svc.updateProfile('owner', 'fs', 'm2', { email: 'taken@x.ru' })).rejects.toThrow('занят');
     await svc.updateProfile('owner', 'fs', 'm2', { email: ' Arina.New@X.ru ' });
     expect(prisma.user.update).toHaveBeenCalledWith({ where: { id: 'arina' }, data: { email: 'arina.new@x.ru' } });
+  });
+});
+
+describe('Политика 2FA пространства', () => {
+  const { FamilySpacesService } = require('../../family-spaces/family-spaces.service');
+  function make(role: string) {
+    const prisma: any = { familySpace: { findUniqueOrThrow: jest.fn(async () => ({ requireTwoFactor: true })), update: jest.fn(async ({ data }: any) => data) } };
+    const audit = { log: jest.fn(async () => undefined) };
+    return { svc: new FamilySpacesService(prisma, { getMembership: async () => ({ role }) } as any, audit as any), audit };
+  }
+  it('выключить требование может только владелец, с записью в журнал', async () => {
+    await expect(make('PARTNER').svc.updateSecurity('u', 'fs', false)).rejects.toThrow('только владелец');
+    const { svc, audit } = make('OWNER');
+    expect(await svc.updateSecurity('u', 'fs', false)).toEqual({ requireTwoFactor: false });
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'security.2fa_optional' }));
   });
 });

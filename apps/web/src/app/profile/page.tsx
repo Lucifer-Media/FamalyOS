@@ -14,6 +14,7 @@ interface Me {
   id: string;
   email: string;
   twoFactorEnabled: boolean;
+  twoFactorRequired?: boolean;
   recoveryCodesRemaining: number;
   lastLoginAt: string | null;
   createdAt: string;
@@ -142,9 +143,12 @@ export default function ProfilePage() {
                 <RefreshCw size={16} /> Новые резервные коды
               </Button>
               <Button variant="ghost" onClick={() => setTwofa({ mode: 'disable', password: '' })}>
-                <ShieldOff size={16} /> Отключить / перенастроить
+                <ShieldOff size={16} /> {me.twoFactorRequired === false ? 'Отключить 2FA' : 'Отключить / перенастроить'}
               </Button>
             </div>
+            {twofa.mode === 'disable' && me.twoFactorRequired !== false && (
+              <p className="mt-2 text-xs text-ink/50">В вашей семье 2FA обязательна — после отключения при следующем входе попросят настроить её заново.</p>
+            )}
             {twofa.mode && !twofa.codes && (
               <div className="animate-in mt-3 flex flex-wrap gap-2">
                 <input type="password" className={`${input} max-w-xs`} placeholder="Пароль для подтверждения" value={twofa.password} onChange={(e) => setTwofa({ ...twofa, password: e.target.value })} />
@@ -166,7 +170,7 @@ export default function ProfilePage() {
           </>
         ) : (
           <div className="mt-2">
-            <p className="text-sm text-ink/60">Family OS требует 2FA для всех участников.</p>
+            <p className="text-sm text-ink/60">{me?.twoFactorRequired === false ? '2FA в семье добровольная — но её стоит включить.' : 'Family OS требует 2FA для всех участников.'}</p>
             <Button className="mt-2" onClick={() => router.push('/2fa-setup')}>
               Включить 2FA
             </Button>

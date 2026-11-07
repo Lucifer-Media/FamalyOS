@@ -95,6 +95,8 @@ model FamilySpace {
   id            String   @id @default(uuid())
   name          String
   baseCurrency  String   @default("RUB")
+  // Итерация 4.2: требовать ли 2FA от всех участников (по умолчанию — да).
+  requireTwoFactor Boolean @default(true)
   status        RecordStatus @default(ACTIVE)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

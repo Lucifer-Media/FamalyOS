@@ -19,6 +19,7 @@ export interface FamilySpaceSummary {
   name: string;
   role: string;
   baseCurrency?: string;
+  requireTwoFactor?: boolean;
 }
 
 interface AuthContextValue {

@@ -30,7 +30,8 @@ const input = 'w-full rounded-card border border-line bg-paper px-3 py-2 text-sm
 
 export default function MemberCardPage() {
   const { loading, isAuthenticated } = useRequireAuth();
-  const { currentFamilySpaceId } = useAuth();
+  const { currentFamilySpaceId, familySpaces } = useAuth();
+  const requireTwoFactor = familySpaces.find((s) => s.id === currentFamilySpaceId)?.requireTwoFactor !== false;
   const params = useParams<{ id: string }>();
   const [acc, setAcc] = useState<Account | null>(null);
   const [error, setError] = useState('');
@@ -146,10 +147,14 @@ export default function MemberCardPage() {
           </div>
           {acc.user.twoFactorEnabled ? (
             <div className="mt-3">
-              <Button variant="danger" onClick={() => run(() => apiFetch(`${base}/2fa/disable`, { method: 'POST' }), '2FA сброшена — при следующем входе участник настроит её заново')}>
-                <ShieldOff size={16} /> Сбросить 2FA
+              <Button variant="danger" onClick={() => run(() => apiFetch(`${base}/2fa/disable`, { method: 'POST' }), requireTwoFactor ? '2FA сброшена — при следующем входе участник настроит её заново' : '2FA отключена')}>
+                <ShieldOff size={16} /> {requireTwoFactor ? 'Сбросить 2FA' : 'Отключить 2FA'}
               </Button>
-              <p className="mt-2 text-xs text-ink/50">Например, если участник сменил телефон. При следующем входе система попросит настроить 2FA заново.</p>
+              <p className="mt-2 text-xs text-ink/50">
+                {requireTwoFactor
+                  ? 'Например, если участник сменил телефон. При следующем входе система попросит настроить 2FA заново.'
+                  : '2FA в семье добровольная — после отключения участник будет входить только по паролю.'}
+              </p>
             </div>
           ) : setup ? (
             <div className="animate-in mt-3 grid gap-4 sm:grid-cols-[200px_1fr]">

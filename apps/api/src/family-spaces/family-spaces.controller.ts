@@ -26,4 +26,9 @@ export class FamilySpacesController {
   ) {
     return this.service.updateBaseCurrency(userId, id, baseCurrency);
   }
+
+  @Patch(':id/security')
+  updateSecurity(@CurrentUser() userId: string, @Param('id') id: string, @Body('requireTwoFactor') requireTwoFactor: boolean) {
+    return this.service.updateSecurity(userId, id, requireTwoFactor);
+  }
 }

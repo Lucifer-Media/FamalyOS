@@ -13,8 +13,13 @@ export default function TwoFactorSetupPage() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Итерация 4.2: если владелец выключил обязательную 2FA — настройку можно пропустить.
+  const [required, setRequired] = useState(true);
 
   useEffect(() => {
+    apiFetch<{ twoFactorRequired: boolean }>('/auth/me')
+      .then((me) => setRequired(me.twoFactorRequired !== false))
+      .catch(() => undefined);
     apiFetch('/auth/2fa/setup', { method: 'POST' })
       .then((res) => {
         setQrCodeDataUrl(res.qrCodeDataUrl);
@@ -45,7 +50,9 @@ export default function TwoFactorSetupPage() {
             Настройте двухфакторную аутентификацию
           </h1>
           <p className="mt-1 text-sm text-ink/60">
-            Family OS требует 2FA для всех участников — это защищает семейные данные.
+            {required
+              ? 'Family OS требует 2FA для всех участников — это защищает семейные данные.'
+              : '2FA в вашей семье добровольная, но очень рекомендуется — она защищает семейные данные.'}
           </p>
         </div>
         <Card className="space-y-4">
@@ -79,6 +86,11 @@ export default function TwoFactorSetupPage() {
           <Button className="w-full" onClick={onConfirm} disabled={busy || code.length < 6}>
             {busy ? 'Проверяем…' : 'Подтвердить и продолжить'}
           </Button>
+          {!required && (
+            <Button variant="ghost" className="w-full" onClick={() => router.push('/dashboard')}>
+              Пропустить — без 2FA
+            </Button>
+          )}
         </Card>
       </div>
     </div>

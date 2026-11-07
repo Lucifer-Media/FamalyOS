@@ -210,7 +210,9 @@ export class AuthService {
         name: m.familySpace.name,
         role: m.role,
       })),
-      twoFactorSetupRequired: !user.twoFactorEnabled,
+      // Итерация 4.2: отправлять на настройку 2FA, только если хоть одно
+      // пространство пользователя её требует (настройка владельца).
+      twoFactorSetupRequired: !user.twoFactorEnabled && memberships.some((m: (typeof memberships)[number]) => m.familySpace.requireTwoFactor !== false),
       trustedDevice: usedTrustedDevice,
       ...(issuedDevice ?? {}),
     };
@@ -447,7 +449,9 @@ export class AuthService {
   async me(userId: string) {
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
     const recovery = user.twoFactorRecoveryCodes ? (JSON.parse(user.twoFactorRecoveryCodes) as string[]).length : 0;
-    return { id: user.id, email: user.email, status: user.status, twoFactorEnabled: user.twoFactorEnabled, recoveryCodesRemaining: recovery, lastLoginAt: user.lastLoginAt, createdAt: user.createdAt };
+    const spaces = await this.prisma.membership.findMany({ where: { userId, status: 'ACTIVE' }, include: { familySpace: true } });
+    const twoFactorRequired = spaces.some((m: (typeof spaces)[number]) => m.familySpace.requireTwoFactor !== false);
+    return { id: user.id, email: user.email, status: user.status, twoFactorEnabled: user.twoFactorEnabled, twoFactorRequired, recoveryCodesRemaining: recovery, lastLoginAt: user.lastLoginAt, createdAt: user.createdAt };
   }
 
   /** Смена своего пароля: нужен текущий. Остальные сессии и все доверенные устройства отзываются. */
