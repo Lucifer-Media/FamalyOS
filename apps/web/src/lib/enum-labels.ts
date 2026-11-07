@@ -111,6 +111,9 @@ export const ENUM_LABELS_RU: Record<string, string> = {
   FAILED: 'Ошибка',
   AI: 'ИИ',
   TEMPLATE: 'Шаблон',
+  TARGET: 'Накопить к дате',
+  RECURRING: 'Резерв под регулярную трату',
+  OPEN: 'Ежемесячный резерв',
 };
 
 export function enumLabel(value: string): string {

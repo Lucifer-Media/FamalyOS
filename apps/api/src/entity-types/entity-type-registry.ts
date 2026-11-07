@@ -778,6 +778,12 @@ export const ENTITY_TYPE_REGISTRY: Record<string, EntityTypeSchema> = {
       },
       { key: 'savingsAccountId', label: 'Счёт копилки (для режима «баланс счёта»)', type: 'link', linkTarget: 'bank_account' },
       { key: 'icon', label: 'Эмодзи копилки (например ✈️)', type: 'string' },
+      // Итерация 4.1 — планирование
+      { key: 'planKind', label: 'Вид плана', type: 'enum', enumValues: ['TARGET', 'RECURRING', 'OPEN'] },
+      { key: 'scope', label: 'Чей план', type: 'enum', enumValues: ['PERSONAL', 'FAMILY'] },
+      { key: 'recurrenceMonths', label: 'Повторяется каждые N месяцев (для резерва)', type: 'number' },
+      { key: 'nextDate', label: 'Ближайшая дата траты (для резерва)', type: 'date' },
+      { key: 'plannedMonthly', label: 'Откладывать в месяц (вручную)', type: 'number' },
       {
         key: 'status',
         label: 'Статус',
@@ -868,6 +874,22 @@ export const ENTITY_TYPE_REGISTRY: Record<string, EntityTypeSchema> = {
       { key: 'narrative', label: 'Текст отчёта', type: 'text', hiddenFromGenericForm: true },
     ],
   },
+  telegram_link: {
+    entityType: 'telegram_link',
+    labelSingular: 'Привязка Telegram',
+    labelPlural: 'Привязки Telegram',
+    resource: 'FINANCE',
+    // Создаётся ботом по одноразовому коду (/link), отвязка — архивированием.
+    fields: [
+      { key: 'telegramUserId', label: 'ID пользователя Telegram', type: 'string', required: true },
+      { key: 'telegramUsername', label: 'Имя в Telegram', type: 'string' },
+      { key: 'chatId', label: 'Чат, где выполнена привязка', type: 'string', required: true },
+      { key: 'userId', label: 'Пользователь Family OS', type: 'string', required: true },
+      { key: 'defaultAccountId', label: 'Счёт по умолчанию для записей из бота', type: 'link', linkTarget: 'bank_account' },
+      { key: 'defaultScope', label: 'Тип расхода по умолчанию', type: 'enum', enumValues: ['PERSONAL', 'FAMILY'] },
+      { key: 'notifyBudgets', label: 'Присылать уведомления о бюджетах в этот чат', type: 'boolean' },
+    ],
+  },
   bank: {
     entityType: 'bank',
     labelSingular: 'Банк',
@@ -891,6 +913,11 @@ export const ENTITY_TYPE_REGISTRY: Record<string, EntityTypeSchema> = {
     labelPlural: 'Банковские счета',
     resource: 'FINANCE',
     fields: [
+      // Итерация 4.1: своё имя счёта («Т-Банк Максим, зарплатная», «Наличные дома»).
+      // Используется как заголовок счёта везде, в т.ч. в Telegram-боте. Не обязательное —
+      // у старых счетов его нет, заголовок у них остаётся прежним.
+      { key: 'accountName', label: 'Наименование счёта', type: 'string' },
+      { key: 'isShared', label: 'Общий (семейный) счёт — показывать в «Общих», а не у владельца', type: 'boolean' },
       { key: 'bankId', label: 'Банк', type: 'link', linkTarget: 'bank' },
       { key: 'bankName', label: 'Название банка (если банк ещё не заведён отдельно)', type: 'string' },
       {

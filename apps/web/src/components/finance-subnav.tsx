@@ -9,12 +9,14 @@ const ITEMS: { href: string; label: string }[] = [
   { href: '/finance/dashboard', label: 'Дашборд' },
   { href: '/finance/budgets', label: 'Бюджеты' },
   { href: '/finance/calendar', label: 'Календарь' },
+  { href: '/finance/planning', label: 'План' },
   { href: '/finance/recurring', label: 'Подписки' },
   { href: '/finance/goals', label: 'Копилки' },
   { href: '/finance/categories', label: 'Категории' },
   { href: '/finance/rules', label: 'Правила' },
   { href: '/finance/analytics', label: 'Аналитика' },
   { href: '/finance/reports', label: 'ИИ-отчёты' },
+  { href: '/finance/telegram', label: 'Telegram' },
   { href: '/finance/portfolio', label: 'Портфель' },
 ];
 

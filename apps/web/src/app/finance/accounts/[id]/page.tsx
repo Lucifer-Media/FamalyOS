@@ -158,7 +158,12 @@ export default function AccountDetailPage() {
     try {
       const updated = await apiFetch<AccountDetail>(`/entities/${params.id}`, {
         method: 'PATCH',
-        body: { attributes: accountValues, ownerPersonId },
+        // Наименование счёта — это и есть его заголовок во всех списках.
+        body: {
+          attributes: accountValues,
+          ownerPersonId,
+          ...(typeof accountValues.accountName === 'string' && accountValues.accountName.trim() ? { title: accountValues.accountName.trim() } : {}),
+        },
       });
       setAccount(updated);
       setAccountValues(updated.attributes ?? {});

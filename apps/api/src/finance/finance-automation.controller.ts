@@ -4,6 +4,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { FamilySpaceId } from '../common/decorators/family-space.decorator';
 import { FinanceAutomationService, CleanupFilter } from './finance-automation.service';
 import { FinanceAiService } from './finance-ai.service';
+import { FinancePlanningService } from './finance-planning.service';
 
 /**
  * Итерация 4 — правила, подписки, копилки, очистка, ИИ.
@@ -16,7 +17,35 @@ export class FinanceAutomationController {
   constructor(
     private readonly automation: FinanceAutomationService,
     private readonly ai: FinanceAiService,
+    private readonly planning: FinancePlanningService,
   ) {}
+
+  // ---------- Планирование (Итерация 4.1) ----------
+  @Get('planning')
+  getPlan(
+    @CurrentUser() userId: string,
+    @FamilySpaceId() fs: string,
+    @Query('scope') scope?: 'PERSONAL' | 'FAMILY',
+    @Query('ownerPersonId') ownerPersonId?: string,
+    @Query('capacity') capacity?: string,
+  ) {
+    const override = capacity !== undefined && capacity !== '' && Number.isFinite(Number(capacity)) ? Number(capacity) : null;
+    return this.planning.getPlan(userId, fs, { scope: scope || undefined, ownerPersonId: ownerPersonId || undefined, capacityOverride: override });
+  }
+
+  @Post('planning/plans')
+  createPlan(@CurrentUser() userId: string, @FamilySpaceId() fs: string, @Body() dto: Parameters<FinancePlanningService['createPlan']>[2]) {
+    return this.planning.createPlan(userId, fs, dto);
+  }
+
+  @Post('planning/explain')
+  explainPlan(
+    @CurrentUser() userId: string,
+    @FamilySpaceId() fs: string,
+    @Body() dto: { scope?: 'PERSONAL' | 'FAMILY'; ownerPersonId?: string; capacity?: number | null; question?: string },
+  ) {
+    return this.planning.explain(userId, fs, { scope: dto.scope, ownerPersonId: dto.ownerPersonId, capacityOverride: dto.capacity ?? null }, dto.question);
+  }
 
   // ---------- Правила ----------
   @Post('rules')

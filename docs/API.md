@@ -119,3 +119,14 @@
 | POST | `/finance/ai/ask` | VIEW | Вопрос ИИ про финансы за период |
 | POST | `/finance/ai/categorize/suggest` | VIEW | ИИ-подсказки категорий (ничего не сохраняет) |
 | POST | `/finance/ai/categorize/apply` | EDIT | Применить подтверждённые подсказки `{items:[{transactionId, categoryId}]}` |
+
+## Итерация 4.1 — план и Telegram
+
+| Метод | Путь | Право | Что делает |
+|---|---|---|---|
+| GET | `/finance/planning?scope&ownerPersonId&capacity` | FINANCE:VIEW | План: свободные деньги, распределение по планам, прогноз категорий, таймлайн, подсказки |
+| POST | `/finance/planning/plans` | FINANCE:CREATE | Создать план `{name, planKind, scope, ownerPersonId?, targetAmount?, deadline?, nextDate?, recurrenceMonths?, plannedMonthly?, priority?, categoryId?}` |
+| POST | `/finance/planning/explain` | FINANCE:VIEW | ИИ-разбор плана / вопрос `{question?}` |
+| GET | `/telegram/status` | FINANCE:VIEW | Статус бота и мои привязки |
+| POST | `/telegram/link-code` | FINANCE:CREATE | Одноразовый код для `/link` (10 мин) |
+| POST | `/telegram/check-budgets` | FINANCE:VIEW | Проверить бюджеты и разослать уведомления сейчас |

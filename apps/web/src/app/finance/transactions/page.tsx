@@ -33,6 +33,7 @@ interface TransactionEntity {
 interface AccountEntity {
   id: string;
   title: string;
+  status?: string;
   attributes: { currency?: string; bankName?: string };
 }
 
@@ -67,6 +68,8 @@ export default function TransactionsPage() {
   const [accountFilter, setAccountFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  // Как на странице «Счета»: архивные счета и их операции скрыты по умолчанию.
+  const [showArchived, setShowArchived] = useState(false);
 
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -95,11 +98,14 @@ export default function TransactionsPage() {
   }, []);
 
   const accountById = useMemo(() => Object.fromEntries(accounts.map((a) => [a.id, a])), [accounts]);
+  const activeAccounts = useMemo(() => accounts.filter((a) => a.status !== 'ARCHIVED'), [accounts]);
+  const filterAccounts = showArchived ? accounts : activeAccounts;
   const categoryById = useMemo(() => Object.fromEntries(categories.map((c) => [c.id, c.title])), [categories]);
 
   const filtered = useMemo(() => {
     return transactions.filter((t) => {
       const a = t.attributes;
+      if (!showArchived && (t.status === 'ARCHIVED' || accountById[a.accountId]?.status === 'ARCHIVED')) return false;
       if (search && !(a.description ?? '').toLowerCase().includes(search.toLowerCase())) return false;
       if (typeFilter === 'EXPENSE' && a.amount >= 0) return false;
       if (typeFilter === 'INCOME' && a.amount < 0) return false;
@@ -109,7 +115,7 @@ export default function TransactionsPage() {
       if (dateTo && a.date > dateTo) return false;
       return true;
     });
-  }, [transactions, search, typeFilter, categoryFilter, accountFilter, dateFrom, dateTo]);
+  }, [transactions, search, typeFilter, categoryFilter, accountFilter, dateFrom, dateTo, showArchived, accountById]);
 
   const groupedByMonth = useMemo(() => {
     const groups = new Map<string, TransactionEntity[]>();
@@ -309,7 +315,7 @@ export default function TransactionsPage() {
           <h1 className="font-display text-2xl font-semibold text-ink">Транзакции</h1>
           <p className="mt-1 text-sm text-ink/60">Все операции по всем счетам в одном месте.</p>
         </div>
-        <Button onClick={openNew} disabled={accounts.length === 0}>
+        <Button onClick={openNew} disabled={activeAccounts.length === 0}>
           <Plus size={16} /> Добавить
         </Button>
       </div>
@@ -318,7 +324,7 @@ export default function TransactionsPage() {
         <Link href="/finance/cleanup" className="inline-flex items-center gap-2 rounded-card px-4 py-2 text-sm font-medium text-ink/70 hover:bg-paper-dim">
           <Eraser size={16} /> Очистка тестовых
         </Link>
-        <Button variant="secondary" onClick={openTransfer} disabled={accounts.length < 2}>
+        <Button variant="secondary" onClick={openTransfer} disabled={activeAccounts.length < 2}>
           <ArrowLeftRight size={16} /> Перевод между счетами
         </Button>
         <Button variant="secondary" onClick={onExportCsv} disabled={filtered.length === 0}>
@@ -363,15 +369,20 @@ export default function TransactionsPage() {
             className="rounded-card border border-line bg-paper px-3 py-1.5 text-sm"
           >
             <option value="">Все счета</option>
-            {accounts.map((a) => (
+            {filterAccounts.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.title}
+                {a.status === 'ARCHIVED' ? ' (архив)' : ''}
               </option>
             ))}
           </select>
           <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-card border border-line bg-paper px-3 py-1.5 text-sm" />
           <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-card border border-line bg-paper px-3 py-1.5 text-sm" />
         </div>
+        <label className="mt-2 flex items-center gap-2 text-sm text-ink/60">
+          <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} className="h-4 w-4 rounded border-line" />
+          Показать архивные счета и операции
+        </label>
       </Card>
 
       {transferMode && (
@@ -406,7 +417,7 @@ export default function TransactionsPage() {
                 onChange={(e) => setTransferForm((f) => ({ ...f, fromAccountId: e.target.value }))}
                 className="w-full rounded-card border border-line bg-paper px-3 py-1.5 text-sm"
               >
-                {accounts.map((a) => (
+                {activeAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.title}
                   </option>
@@ -420,7 +431,7 @@ export default function TransactionsPage() {
                 onChange={(e) => setTransferForm((f) => ({ ...f, toAccountId: e.target.value }))}
                 className="w-full rounded-card border border-line bg-paper px-3 py-1.5 text-sm"
               >
-                {accounts.map((a) => (
+                {activeAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.title}
                   </option>
@@ -461,7 +472,7 @@ export default function TransactionsPage() {
                 onChange={(e) => setForm((f) => ({ ...f, accountId: e.target.value }))}
                 className="w-full rounded-card border border-line bg-paper px-3 py-1.5 text-sm"
               >
-                {accounts.map((a) => (
+                {activeAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.title}
                   </option>
@@ -561,7 +572,7 @@ export default function TransactionsPage() {
                           {t.status === 'ARCHIVED' && <Badge tone="default">архив</Badge>}
                         </p>
                         <p className="text-xs text-ink/40">
-                          {t.attributes.date} {categoryName && `· ${categoryName}`} {account && `· ${account.title}`}
+                          {t.attributes.date} {categoryName && `· ${categoryName}`} {account && <>· <span className="font-semibold text-ink/80">{account.title}</span></>}
                         </p>
                       </div>
                     </div>

@@ -27,6 +27,7 @@ interface AccountSummary {
     accountType?: string;
     currency?: string;
     currentBalance?: number;
+    isShared?: boolean;
   };
 }
 
@@ -67,7 +68,8 @@ export default function FinancePage() {
     if (!schema) return;
     setError('');
     try {
-      const title = `${values.bankName ?? 'Счёт'} (${values.accountType ?? ''})`;
+      const name = typeof values.accountName === 'string' ? values.accountName.trim() : '';
+      const title = name || `${values.bankName ?? 'Счёт'} (${values.accountType ?? ''})`;
       await apiFetch('/entities', {
         method: 'POST',
         body: { entityType: 'bank_account', title, attributes: values, ownerPersonId },
@@ -105,6 +107,12 @@ export default function FinancePage() {
   if (loading || !isAuthenticated) return null;
 
   const visibleAccounts = accounts.filter((a) => showArchived || a.status !== 'ARCHIVED');
+  // Разбивка: общие (флажок «общий» или без владельца) и личные по каждому участнику.
+  const groups: { key: string; title: string; items: AccountSummary[] }[] = [
+    { key: 'shared', title: 'Общие счета', items: visibleAccounts.filter((a) => a.attributes.isShared || !a.ownerPersonId) },
+    ...people.map((p) => ({ key: p.id, title: `Личные счета · ${p.fullName}`, items: visibleAccounts.filter((a) => !a.attributes.isShared && a.ownerPersonId === p.id) })),
+    { key: 'other', title: 'Другие участники', items: visibleAccounts.filter((a) => !a.attributes.isShared && a.ownerPersonId && !people.some((p) => p.id === a.ownerPersonId)) },
+  ].filter((g) => g.items.length > 0);
 
   return (
     <AppShell>
@@ -167,8 +175,20 @@ export default function FinancePage() {
         </label>
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {visibleAccounts.map((acc) => {
+      {groups.map((group) => (
+        <section key={group.key} className="mt-5">
+          <div className="flex items-baseline justify-between">
+            <h3 className="font-display text-base font-semibold text-ink">{group.title}</h3>
+            <span className="text-xs text-ink/50">
+              {group.items.filter((a) => a.status !== 'ARCHIVED').length} счёт(а)
+              {(() => {
+                const sum = group.items.filter((a) => a.status !== 'ARCHIVED' && a.attributes.currency === 'RUB' && typeof a.attributes.currentBalance === 'number').reduce((x, a) => x + (a.attributes.currentBalance as number), 0);
+                return sum ? ` · ${Math.round(sum).toLocaleString('ru-RU')} ₽` : '';
+              })()}
+            </span>
+          </div>
+          <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {group.items.map((acc) => {
           const bank = acc.attributes.bankId ? banks[acc.attributes.bankId] : undefined;
           const bankName = bank?.attributes.name ?? acc.attributes.bankName;
           const brandColor = acc.attributes.brandColorOverride ?? bank?.attributes.brandColor;
@@ -181,7 +201,8 @@ export default function FinancePage() {
                   <div className="flex items-center gap-2.5">
                     <BankAvatar bankName={bankName} brandColor={brandColor} />
                     <div>
-                      <p className="font-medium text-ink">{acc.title}</p>
+                      <p className="font-semibold text-ink">{acc.title}</p>
+                      {bankName && bankName !== acc.title && <p className="text-xs text-ink/50">{bankName}</p>}
                       {typeof acc.attributes.currentBalance === 'number' && (
                         <p className="text-sm text-ink/60">
                           {acc.attributes.currentBalance.toLocaleString('ru-RU')} {acc.attributes.currency}
@@ -209,8 +230,10 @@ export default function FinancePage() {
             </Link>
           );
         })}
-        {visibleAccounts.length === 0 && !creating && <p className="text-sm text-ink/50">Счетов пока нет.</p>}
-      </div>
+          </div>
+        </section>
+      ))}
+      {visibleAccounts.length === 0 && !creating && <p className="mt-3 text-sm text-ink/50">Счетов пока нет.</p>}
     </AppShell>
   );
 }

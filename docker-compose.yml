@@ -85,6 +85,13 @@ services:
       LLM_FALLBACK_MODEL: ${LLM_FALLBACK_MODEL:-}
       # Таймаут генерации финансового отчёта (мс) — на CPU ноутбука это минуты.
       LLM_REPORT_TIMEOUT_MS: ${LLM_REPORT_TIMEOUT_MS:-300000}
+      # Итерация 4.1 — Telegram-бот (long polling, наружу ничего не открывается).
+      # Без TELEGRAM_BOT_TOKEN бот выключен.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ALLOWED_CHAT_IDS: ${TELEGRAM_ALLOWED_CHAT_IDS:-}
+      TELEGRAM_API_URL: ${TELEGRAM_API_URL:-}
+      TELEGRAM_BUDGET_CHECK_MINUTES: ${TELEGRAM_BUDGET_CHECK_MINUTES:-60}
+      FAMILY_TIMEZONE: ${FAMILY_TIMEZONE:-Europe/Moscow}
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-}

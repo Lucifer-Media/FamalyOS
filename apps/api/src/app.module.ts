@@ -21,6 +21,7 @@ import { FinanceModule } from './finance/finance.module';
 import { CurrencyRatesModule } from './currency-rates/currency-rates.module';
 import { UtilitiesModule } from './utilities/utilities.module';
 import { AiAssistantModule } from './ai-assistant/ai-assistant.module';
+import { TelegramModule } from './telegram/telegram.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { AiAssistantModule } from './ai-assistant/ai-assistant.module';
     CurrencyRatesModule,
     UtilitiesModule,
     AiAssistantModule,
+    TelegramModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
   controllers: [HealthController],
